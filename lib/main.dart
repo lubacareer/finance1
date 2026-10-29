@@ -577,37 +577,52 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> importFile([Map<String, dynamic>? account]) async {
-    if (c.accounts.isEmpty) {
-      message(t('Create an account first'));
+    if (!mounted) return;
+    if (c.lastSaveError != null) {
+      message(
+        t('Changes could not be saved. Check device storage and try again.'),
+      );
       return;
     }
-    account ??= await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text(t('Account')),
-        children: [
-          for (final a in c.accounts)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, a),
-              child: Text('${a['name']}'),
-            ),
-        ],
-      ),
-    );
-    if (account == null || !mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute<void>(
         builder: (_) => ImportScreen(
-          accountId: '${account!['id']}',
+          accountId: account?['id']?.toString() ?? '',
           tr: t,
           existing: c.entries,
           accounts: c.accounts,
+          savedCardBindings: c.cardMappings,
+          hasPendingSaveFailure: () => c.lastSaveError != null,
+          onSaveMulti:
+              (
+                rows,
+                fileName,
+                replacements,
+                newAccounts,
+                bindings,
+                skippedMatches,
+              ) async {
+                await c.importEntries(
+                  rows,
+                  fileName: fileName,
+                  replacementRows: replacements,
+                  newAccounts: newAccounts,
+                  cardMappings: bindings,
+                  skippedMatches: skippedMatches,
+                  multiCardImport: true,
+                );
+                if (rows.any((row) => row['amountIls'] == null)) {
+                  unawaited(convertRates());
+                }
+              },
           onSaveWithFilename: (rows, fileName, replacementRows) async {
             await c.importEntries(
               rows,
               fileName: fileName,
-              accountId: '${account!['id']}',
+              accountId: rows.isEmpty
+                  ? (account == null ? null : '${account['id']}')
+                  : '${rows.first['accountId']}',
               replacementRows: replacementRows,
             );
             if (rows.any((row) => row['amountIls'] == null)) {

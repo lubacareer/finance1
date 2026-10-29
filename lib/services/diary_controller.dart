@@ -29,6 +29,9 @@ class DiaryController extends ChangeNotifier {
   List<Map<String, dynamic>> get accounts => _list('accounts');
   List<Map<String, dynamic>> get entries => _list('entries');
   List<Map<String, dynamic>> get imports => _list('imports');
+
+  /// Previously confirmed mappings are suggestions, never automatic assignments.
+  List<Map<String, dynamic>> get cardMappings => _list('cardMappings');
   List<String> get dismissedIds =>
       List<String>.from(_data['dismissedIds'] ?? []);
   String get language => (_data['language'] as String?) ?? 'en';
@@ -46,6 +49,7 @@ class DiaryController extends ChangeNotifier {
       'accounts': [],
       'entries': [],
       'imports': [],
+      'cardMappings': [],
       'rates': <String, dynamic>{},
       'dismissedIds': [],
       'language': 'en',
@@ -383,10 +387,60 @@ class DiaryController extends ChangeNotifier {
     String? fileName,
     String? accountId,
     List<Map<String, dynamic>> replacementRows = const [],
+    List<Map<String, dynamic>> skippedMatches = const [],
+    List<Map<String, dynamic>> newAccounts = const [],
+    List<Map<String, dynamic>> cardMappings = const [],
+    bool multiCardImport = false,
   }) async {
     _assertEditable();
+    // Validate the entire operation before touching the diary. The mapping is
+    // confirmed by the caller for this import; persisted mappings are only hints.
+    final nextAccounts = accounts;
+    final accountIds = nextAccounts.map((a) => '${a['id']}').toSet();
+    for (final account in newAccounts) {
+      final id = account['id'];
+      if (id is! String ||
+          id.trim().isEmpty ||
+          account['type'] != 'card' ||
+          !accountIds.add(id)) {
+        throw ArgumentError('Invalid or duplicate new card account.');
+      }
+      nextAccounts.add(Map<String, dynamic>.from(account));
+    }
+    final confirmed = <Map<String, dynamic>>[];
+    final keys = <(String, String)>{};
+    final targets = <String>{};
+    for (final mapping in cardMappings) {
+      final provider = mapping['provider'];
+      final suffix = mapping['cardSuffix'];
+      final target = mapping['accountId'];
+      if (provider is! String ||
+          provider.trim().isEmpty ||
+          suffix is! String ||
+          !RegExp(r'^\d{4}$').hasMatch(suffix) ||
+          target is! String ||
+          !nextAccounts.any((a) => a['id'] == target && a['type'] == 'card') ||
+          !keys.add((provider.trim().toUpperCase(), suffix)) ||
+          !targets.add(target)) {
+        throw ArgumentError('Invalid or conflicting card mapping.');
+      }
+      confirmed.add({
+        'provider': provider.trim().toUpperCase(),
+        'cardSuffix': suffix,
+        'accountId': target,
+      });
+    }
+    if (multiCardImport || newAccounts.isNotEmpty || cardMappings.isNotEmpty) {
+      for (final row in imported) {
+        if (!nextAccounts.any(
+          (a) => a['id'] == row['accountId'] && a['type'] == 'card',
+        )) {
+          throw ArgumentError('Invalid imported card account.');
+        }
+      }
+    }
     final current = {for (final row in entries) '${row['id']}': row};
-    for (final expected in replacementRows) {
+    for (final expected in [...replacementRows, ...skippedMatches]) {
       final actual = current['${expected['id']}'];
       if (actual == null || jsonEncode(actual) != jsonEncode(expected)) {
         throw StateError(
@@ -394,15 +448,50 @@ class DiaryController extends ChangeNotifier {
         );
       }
     }
+    final replacements = replacementRows.map((row) => '${row['id']}').toSet();
+    if (skippedMatches.any((row) => replacements.contains('${row['id']}'))) {
+      throw StateError('A transaction changed since review. Review it again.');
+    }
+    // Do not create an empty staged account when every row was skipped or
+    // already present. No suggestion may point at an account not persisted.
+    final existingEntryIds = current.keys.toSet()
+      ..removeAll(replacementRows.map((row) => '${row['id']}'));
+    final usedAccountIds = <String>{};
+    for (final row in imported) {
+      if (existingEntryIds.add('${row['id']}')) {
+        usedAccountIds.add('${row['accountId']}');
+      }
+    }
+    final stagedIds = newAccounts.map((a) => '${a['id']}').toSet();
+    nextAccounts.removeWhere(
+      (a) =>
+          stagedIds.contains('${a['id']}') &&
+          !usedAccountIds.contains('${a['id']}'),
+    );
+    final updatedMappings = this.cardMappings;
+    for (final mapping in confirmed.where(
+      (m) => nextAccounts.any((a) => a['id'] == m['accountId']),
+    )) {
+      updatedMappings.removeWhere(
+        (old) =>
+            '${old['provider']}'.trim().toUpperCase() == mapping['provider'] &&
+            old['cardSuffix'] == mapping['cardSuffix'],
+      );
+      updatedMappings.add(mapping);
+    }
+    _data['accounts'] = nextAccounts;
+    if (confirmed.isNotEmpty) _data['cardMappings'] = updatedMappings;
     final replacementIds = replacementRows.map((row) => '${row['id']}').toSet();
     if (replacementIds.isNotEmpty) _removeEntries(replacementIds);
     final list = entries;
     final ids = list.map((e) => e['id']).toSet();
     final savedIds = <String>[];
+    final savedAccountIds = <String>{};
     for (final row in imported) {
       if (ids.add(row['id'])) {
         list.add(row);
         savedIds.add('${row['id']}');
+        savedAccountIds.add('${row['accountId']}');
       }
     }
     _data['entries'] = list;
@@ -410,7 +499,8 @@ class DiaryController extends ChangeNotifier {
       final history = imports;
       history.add({
         'id': 'statement-${DateTime.now().microsecondsSinceEpoch}',
-        'accountId': accountId ?? '${imported.first['accountId']}',
+        'accountId': accountId ?? savedAccountIds.first,
+        'accountIds': savedAccountIds.toList(),
         'fileName': fileName,
         'importedAt': DateTime.now().toIso8601String(),
         'entryIds': savedIds,
@@ -514,6 +604,8 @@ class DiaryController extends ChangeNotifier {
     }
     _data['entries'] = list;
     _data['accounts'] = accounts..removeWhere((a) => a['id'] == id);
+    _data['cardMappings'] = cardMappings
+      ..removeWhere((mapping) => mapping['accountId'] == id);
     _extendRecurring();
     await _save();
   }

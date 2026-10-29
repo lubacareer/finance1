@@ -19,6 +19,9 @@ class ImportScreen extends StatefulWidget {
     required this.tr,
     required this.onSave,
     this.onSaveWithFilename,
+    this.onSaveMulti,
+    this.savedCardBindings = const [],
+    this.hasPendingSaveFailure,
     this.existing = const [],
     this.accounts = const [],
     this.parseFile,
@@ -33,6 +36,17 @@ class ImportScreen extends StatefulWidget {
     List<Map<String, dynamic>>,
   )?
   onSaveWithFilename;
+  final Future<void> Function(
+    List<Map<String, dynamic>>,
+    String,
+    List<Map<String, dynamic>>,
+    List<Map<String, dynamic>>,
+    List<Map<String, dynamic>>,
+    List<Map<String, dynamic>>,
+  )?
+  onSaveMulti;
+  final List<Map<String, dynamic>> savedCardBindings;
+  final bool Function()? hasPendingSaveFailure;
   final List<Map<String, dynamic>> existing;
   final List<Map<String, dynamic>> accounts;
   final Future<ImportPreview> Function(Uint8List, String)? parseFile;
@@ -52,11 +66,225 @@ class _ImportScreenState extends State<ImportScreen> {
   bool includePaymentCandidates = false;
   bool unidentifiedCardAcknowledged = false;
   final Set<int?> includedUnidentifiedCalPages = {};
+  // A choice is made explicitly for each suffix; null means still undecided.
+  // New accounts and mappings remain local until the confirmed save succeeds.
+  final Map<String, String> cardDestinations = {};
+  final Map<int?, String> unidentifiedDestinations = {};
+  final List<Map<String, dynamic>> stagedAccounts = [];
+  late String selectedAccountId;
+  static const _skipCard = '__skip_card__';
+  static const _newCard = '__new_card__';
+  bool get multiCard =>
+      widget.onSaveMulti != null &&
+      (preview?.format == 'pdf:MAX' || preview?.format == 'pdf:CAL');
+  List<Map<String, dynamic>> get cardAccounts => [
+    ...widget.accounts.where((account) => account['type'] == 'card'),
+    ...stagedAccounts,
+  ];
   int? date, description, amount, debit, credit, currency, category;
   List<Map<String, dynamic>>? drafts;
   List<Map<String, dynamic>> matches = [];
   Map<String, Map<String, dynamic>> exactMatches = {};
   final Map<String, String> duplicateChoices = {};
+
+  @override
+  void initState() {
+    super.initState();
+    selectedAccountId = widget.accountId;
+  }
+
+  Future<String?> createStagedCard() async {
+    var name = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('Create credit card account')),
+        content: TextField(
+          autofocus: true,
+          decoration: InputDecoration(labelText: t('Account name')),
+          onChanged: (value) => name = value.trim(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(t('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (name.isNotEmpty) Navigator.pop(context, name);
+            },
+            child: Text(t('Create')),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || result == null || result.trim().isEmpty) return null;
+    final id =
+        'card-${DateTime.now().microsecondsSinceEpoch}-${stagedAccounts.length}';
+    setState(
+      () => stagedAccounts.add({
+        'id': id,
+        'name': result.trim(),
+        'type': 'card',
+        'balance': null,
+      }),
+    );
+    return id;
+  }
+
+  String accountName(String id) =>
+      cardAccounts
+          .where((a) => a['id'] == id)
+          .map((a) => '${a['name'] ?? a['id']}')
+          .firstOrNull ??
+      id;
+
+  void makeMultiCardDrafts() {
+    final data = preview!;
+    if (data.cardSuffixes.any(
+      (suffix) => !cardDestinations.containsKey(suffix),
+    )) {
+      setState(() => error = t('Choose a destination or skip each card.'));
+      return;
+    }
+    final destinations = cardDestinations.values
+        .where((id) => id != _skipCard)
+        .toList();
+    if (destinations.toSet().length != destinations.length) {
+      setState(() => error = t('Each card must have a different account.'));
+      return;
+    }
+    final result = <Map<String, dynamic>>[];
+    for (final row in data.candidates(accountId: '')) {
+      final suffix = '${row['cardSuffix'] ?? ''}'.trim();
+      final page = row['sourcePage'] is int ? row['sourcePage'] as int : null;
+      final destination = suffix.isEmpty
+          ? unidentifiedDestinations[page]
+          : cardDestinations[suffix];
+      if (destination == null ||
+          destination == _skipCard ||
+          (row['paymentCandidate'] == true && !includePaymentCandidates)) {
+        continue;
+      }
+      if (!cardAccounts.any((a) => a['id'] == destination)) continue;
+      row['accountId'] = destination;
+      result.add(row);
+    }
+    result.sort(
+      (a, b) =>
+          accountName('${a['accountId']}')
+              .compareTo(accountName('${b['accountId']}')),
+    );
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    for (var i = 0; i < result.length; i++) {
+      result[i]['id'] = 'import-$stamp-$i';
+    }
+    setState(() {
+      drafts = result;
+      refreshMatches();
+      error = result.isEmpty
+          ? t(
+              'No complete transactions found. Check the mapping or add entries manually.',
+            )
+          : null;
+    });
+  }
+
+  Widget cardDestinationPicker(String suffix) {
+    final provider = preview!.format.substring(4);
+    final savedCandidates = widget.savedCardBindings
+        .where(
+          (binding) =>
+              binding['provider'] == provider &&
+              binding['cardSuffix'] == suffix,
+        )
+        .toList();
+    final saved =
+        savedCandidates.length == 1 &&
+            widget.accounts.any(
+              (a) =>
+                  a['type'] == 'card' &&
+                  a['id'] == savedCandidates.single['accountId'],
+            )
+        ? savedCandidates.single
+        : null;
+    return DropdownButtonFormField<String>(
+      key: ValueKey('card-destination-$suffix-${cardDestinations[suffix]}'),
+      initialValue: cardDestinations[suffix],
+      decoration: InputDecoration(
+        labelText: '${t('Destination for card')} •••• $suffix',
+        helperText:
+            '${t('Transactions')}: ${preview!.providerRows!.where((row) => row['cardSuffix'] == suffix && row['paymentCandidate'] != true).length}'
+            '${saved == null ? '' : ' • ${t('Previous choice; confirm again')}: ${accountName('${saved['accountId']}')}'}',
+      ),
+      items: [
+        for (final account in cardAccounts)
+          DropdownMenuItem(
+            value: '${account['id']}',
+            child: Text('${account['name'] ?? account['id']}'),
+          ),
+        DropdownMenuItem(
+          value: _newCard,
+          child: Text(t('Create credit card account')),
+        ),
+        DropdownMenuItem(value: _skipCard, child: Text(t('Skip this card'))),
+      ],
+      onChanged: loading
+          ? null
+          : (value) async {
+              if (value == _newCard) value = await createStagedCard();
+              if (!mounted || value == null) return;
+              setState(() {
+                cardDestinations[suffix] = value!;
+                drafts = null;
+                refreshMatches();
+                error = null;
+              });
+            },
+    );
+  }
+
+  Widget unidentifiedDestinationPicker(int? page) {
+    return DropdownButtonFormField<String>(
+      key: ValueKey('unidentified-$page-${unidentifiedDestinations[page]}'),
+      initialValue: unidentifiedDestinations[page],
+      decoration: InputDecoration(
+        labelText: page == null
+            ? t('Unidentified entries: unknown page')
+            : t('Unidentified entries on page {page}')
+                  .replaceAll('{page}', '$page'),
+        helperText: t(
+          'Assign only after checking the statement; otherwise these rows are skipped.',
+        ),
+      ),
+      items: [
+        DropdownMenuItem(
+          value: _skipCard,
+          child: Text(t('Skip unidentified entries')),
+        ),
+        for (final account in cardAccounts)
+          DropdownMenuItem(
+            value: '${account['id']}',
+            child: Text('${account['name'] ?? account['id']}'),
+          ),
+        DropdownMenuItem(
+          value: _newCard,
+          child: Text(t('Create credit card account')),
+        ),
+      ],
+      onChanged: loading
+          ? null
+          : (value) async {
+              if (value == _newCard) value = await createStagedCard();
+              if (!mounted || value == null) return;
+              setState(() {
+                unidentifiedDestinations[page] = value!;
+                drafts = null;
+                refreshMatches();
+              });
+            },
+    );
+  }
 
   String defaultDuplicateChoice(Map<String, dynamic> row) {
     final match = exactMatches['${row['id']}'];
@@ -99,7 +327,7 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     matches = Insights.matchCandidates(
       [...widget.existing, ...current],
-      accounts: widget.accounts,
+      accounts: [...widget.accounts, ...stagedAccounts],
       involvingIds: current.map((row) => '${row['id']}').toSet(),
     );
   }
@@ -171,10 +399,14 @@ class _ImportScreenState extends State<ImportScreen> {
       if (!mounted) return;
       setState(() {
         preview = result;
+        if (widget.accountId.isEmpty) selectedAccountId = '';
         selectedCardSuffix = null;
         includePaymentCandidates = false;
         unidentifiedCardAcknowledged = false;
         includedUnidentifiedCalPages.clear();
+        cardDestinations.clear();
+        unidentifiedDestinations.clear();
+        stagedAccounts.clear();
         fileName = file.name;
         date = suggested?.date;
         description = suggested?.description;
@@ -188,7 +420,7 @@ class _ImportScreenState extends State<ImportScreen> {
             (suggested?.cardSummary ?? false) ||
             widget.accounts.any(
               (account) =>
-                  account['id'] == widget.accountId &&
+                  account['id'] == selectedAccountId &&
                   account['type'] == 'card',
             );
       });
@@ -206,9 +438,17 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void makeDrafts() {
+    if (multiCard) {
+      makeMultiCardDrafts();
+      return;
+    }
+    if (selectedAccountId.isEmpty) {
+      setState(() => error = t('Choose an account before importing.'));
+      return;
+    }
     if (preview?.providerRows != null) {
       final account = widget.accounts
-          .where((a) => a['id'] == widget.accountId)
+          .where((a) => a['id'] == selectedAccountId)
           .firstOrNull;
       final expectedType = preview!.format == 'pdf:Yahav' ? 'bank' : 'card';
       if (account != null && account['type'] != expectedType) {
@@ -238,7 +478,7 @@ class _ImportScreenState extends State<ImportScreen> {
         return;
       }
       setState(() {
-        drafts = preview!.candidates(accountId: widget.accountId).where((row) {
+        drafts = preview!.candidates(accountId: selectedAccountId).where((row) {
           final card = row['cardSuffix'];
           final unidentifiedCal =
               preview!.format == 'pdf:CAL' &&
@@ -296,7 +536,7 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     setState(() {
       drafts = preview!.candidates(
-        accountId: widget.accountId,
+        accountId: selectedAccountId,
         mapping: mapping,
         amountIsExpense: expense,
       );
@@ -532,519 +772,722 @@ class _ImportScreenState extends State<ImportScreen> {
       return '${t('Possible match')}: ${others.map((entry) => '${entry['description']} (${entry['date']})').join(', ')}';
     }
 
-    return Scaffold(
-      appBar: AppBar(title: Text(t('Import statement'))),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            t(
-              'Choose one statement for this account. Nothing is saved until you confirm.',
-            ),
-            style: Theme.of(context).textTheme.bodyLarge,
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: loading ? null : pick,
-            icon: const Icon(Icons.upload_file),
-            label: Text(fileName ?? t('Choose a file')),
-          ),
-          if (loading) const LinearProgressIndicator(),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+    return PopScope(
+      canPop: !loading,
+      child: Scaffold(
+        appBar: AppBar(title: Text(t('Import statement'))),
+        body: AbsorbPointer(
+          absorbing: loading,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Text(
+                t('Choose a statement. Nothing is saved until you confirm.'),
+                style: Theme.of(context).textTheme.bodyLarge,
               ),
-            ),
-          if (data != null) ...[
-            for (final warning in data.warnings)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(warningText(warning)),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: loading ? null : pick,
+                icon: const Icon(Icons.upload_file),
+                label: Text(fileName ?? t('Choose a file')),
               ),
-            if (data.format.startsWith('pdf:'))
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  '${t('Detected bank statement')}: ${t(data.format.substring(4))}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            if (!data.blocked && data.providerRows != null) ...[
-              if ((data.format == 'pdf:MAX' ||
-                      (data.format == 'pdf:CAL' &&
-                          data.providerRows!.every(
-                            (r) => r['sourcePage'] == null,
-                          ))) &&
-                  data.cardSuffixes.isEmpty)
-                CheckboxListTile(
-                  value: unidentifiedCardAcknowledged,
-                  title: Text(
-                    t(
-                      'Confirm that these transactions belong to the selected card.',
+              if (loading) const LinearProgressIndicator(),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
-                  onChanged: (value) => setState(() {
-                    unidentifiedCardAcknowledged = value ?? false;
-                    drafts = null;
-                  }),
                 ),
-              if (data.cardSuffixes.isNotEmpty)
-                DropdownButtonFormField<String>(
-                  initialValue: selectedCardSuffix,
-                  decoration: InputDecoration(
-                    labelText: t('Select statement card'),
+              if (data != null) ...[
+                if (!multiCard && widget.accountId.isEmpty)
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedAccountId.isEmpty
+                        ? null
+                        : selectedAccountId,
+                    decoration: InputDecoration(labelText: t('Account')),
+                    items: [
+                      for (final account in widget.accounts.where(
+                        (a) =>
+                            data.format != 'pdf:Yahav' || a['type'] == 'bank',
+                      ))
+                        DropdownMenuItem(
+                          value: '${account['id']}',
+                          child: Text('${account['name'] ?? account['id']}'),
+                        ),
+                    ],
+                    onChanged: loading
+                        ? null
+                        : (id) => setState(() {
+                            selectedAccountId = id ?? '';
+                            expense = widget.accounts.any(
+                              (a) => a['id'] == id && a['type'] == 'card',
+                            );
+                            drafts = null;
+                            refreshMatches();
+                          }),
                   ),
-                  items: [
-                    for (final card in data.cardSuffixes)
-                      DropdownMenuItem(value: card, child: Text('•••• $card')),
-                  ],
-                  onChanged: (card) => setState(() {
-                    selectedCardSuffix = card;
-                    includedUnidentifiedCalPages.clear();
-                    drafts = null;
-                  }),
-                ),
-              if (selectedCardSuffix != null)
-                Text(
-                  '${t('Rows for other cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != null && row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
-                ),
-              if (data.format == 'pdf:CAL')
-                for (final page
-                    in data.providerRows!
-                        .where(
-                          (row) =>
-                              row['cardSuffix'] == null ||
-                              '${row['cardSuffix']}'.trim().isEmpty,
-                        )
-                        .map(
-                          (row) => row['sourcePage'] is int
-                              ? row['sourcePage'] as int
-                              : null,
-                        )
-                        .toSet())
-                  if (page != null ||
-                      data.cardSuffixes.isNotEmpty ||
-                      data.providerRows!.any((r) => r['sourcePage'] != null))
-                    CheckboxListTile(
-                      value: includedUnidentifiedCalPages.contains(page),
-                      title: Text(
-                        page == null
-                            ? t(
-                                'Include unidentified CAL entries with unknown page for the selected card',
-                              )
-                            : t(
-                                'Include unidentified CAL entries from page {page} for the selected card',
-                              ).replaceAll('{page}', '$page'),
+                for (final warning in data.warnings)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(warningText(warning)),
+                  ),
+                if (data.format.startsWith('pdf:'))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      '${t('Detected bank statement')}: ${t(data.format.substring(4))}',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                if (!data.blocked && data.providerRows != null) ...[
+                  if (multiCard) ...[
+                    Text(t('Choose an account for each card or skip it.')),
+                    Text(
+                      t(
+                        'Card identifiers show only the last four digits. Check the statement to confirm each card.',
                       ),
+                    ),
+                    for (final suffix in data.cardSuffixes)
+                      cardDestinationPicker(suffix),
+                    for (final page
+                        in data.providerRows!
+                            .where(
+                              (row) =>
+                                  row['cardSuffix'] == null ||
+                                  '${row['cardSuffix']}'.trim().isEmpty,
+                            )
+                            .map(
+                              (row) => row['sourcePage'] is int
+                                  ? row['sourcePage'] as int
+                                  : null,
+                            )
+                            .toSet())
+                      unidentifiedDestinationPicker(page),
+                  ] else ...[
+                    if ((data.format == 'pdf:MAX' ||
+                            (data.format == 'pdf:CAL' &&
+                                data.providerRows!.every(
+                                  (r) => r['sourcePage'] == null,
+                                ))) &&
+                        data.cardSuffixes.isEmpty)
+                      CheckboxListTile(
+                        value: unidentifiedCardAcknowledged,
+                        title: Text(
+                          t(
+                            'Confirm that these transactions belong to the selected card.',
+                          ),
+                        ),
+                        onChanged: (value) => setState(() {
+                          unidentifiedCardAcknowledged = value ?? false;
+                          drafts = null;
+                        }),
+                      ),
+                    if (data.cardSuffixes.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedCardSuffix,
+                        decoration: InputDecoration(
+                          labelText: t('Select statement card'),
+                        ),
+                        items: [
+                          for (final card in data.cardSuffixes)
+                            DropdownMenuItem(
+                              value: card,
+                              child: Text('•••• $card'),
+                            ),
+                        ],
+                        onChanged: (card) => setState(() {
+                          selectedCardSuffix = card;
+                          includedUnidentifiedCalPages.clear();
+                          drafts = null;
+                        }),
+                      ),
+                    if (selectedCardSuffix != null)
+                      Text(
+                        '${t('Rows for other cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != null && row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
+                      ),
+                    if (data.format == 'pdf:CAL')
+                      for (final page
+                          in data.providerRows!
+                              .where(
+                                (row) =>
+                                    row['cardSuffix'] == null ||
+                                    '${row['cardSuffix']}'.trim().isEmpty,
+                              )
+                              .map(
+                                (row) => row['sourcePage'] is int
+                                    ? row['sourcePage'] as int
+                                    : null,
+                              )
+                              .toSet())
+                        if (page != null ||
+                            data.cardSuffixes.isNotEmpty ||
+                            data.providerRows!.any(
+                              (r) => r['sourcePage'] != null,
+                            ))
+                          CheckboxListTile(
+                            value: includedUnidentifiedCalPages.contains(page),
+                            title: Text(
+                              page == null
+                                  ? t(
+                                      'Include unidentified CAL entries with unknown page for the selected card',
+                                    )
+                                  : t(
+                                      'Include unidentified CAL entries from page {page} for the selected card',
+                                    ).replaceAll('{page}', '$page'),
+                            ),
+                            subtitle: Text(
+                              '${t('Unidentified purchases')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] != true).length} • '
+                              '${t('Unidentified payment totals')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] == true).length}',
+                            ),
+                            onChanged: (value) => setState(() {
+                              if (value == true) {
+                                includedUnidentifiedCalPages.add(page);
+                              } else {
+                                includedUnidentifiedCalPages.remove(page);
+                              }
+                              drafts = null;
+                            }),
+                          ),
+                  ],
+                  if (data.providerRows!.any(
+                    (row) => row['paymentCandidate'] == true,
+                  ))
+                    CheckboxListTile(
+                      value: includePaymentCandidates,
+                      title: Text(t('Review statement payment total')),
                       subtitle: Text(
-                        '${t('Unidentified purchases')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] != true).length} • '
-                        '${t('Unidentified payment totals')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] == true).length}',
+                        t(
+                          'Payment totals are separate from purchases and may need linking.',
+                        ),
                       ),
                       onChanged: (value) => setState(() {
-                        if (value == true) {
-                          includedUnidentifiedCalPages.add(page);
-                        } else {
-                          includedUnidentifiedCalPages.remove(page);
-                        }
+                        includePaymentCandidates = value ?? false;
                         drafts = null;
                       }),
                     ),
-              if (data.providerRows!.any(
-                (row) => row['paymentCandidate'] == true,
-              ))
-                CheckboxListTile(
-                  value: includePaymentCandidates,
-                  title: Text(t('Review statement payment total')),
-                  subtitle: Text(
-                    t(
-                      'Payment totals are separate from purchases and may need linking.',
-                    ),
+                  FilledButton.tonal(
+                    onPressed: makeDrafts,
+                    child: Text(t('Prepare review')),
                   ),
-                  onChanged: (value) => setState(() {
-                    includePaymentCandidates = value ?? false;
-                    drafts = null;
-                  }),
-                ),
-              FilledButton.tonal(
-                onPressed: makeDrafts,
-                child: Text(t('Prepare review')),
-              ),
-            ],
-            if (!data.blocked && data.providerRows == null) ...[
-              const SizedBox(height: 16),
-              Text(
-                t('Map columns'),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              columnPicker('Date', date, (v) => date = v, count),
-              columnPicker(
-                'Description',
-                description,
-                (v) => description = v,
-                count,
-              ),
-              columnPicker('Amount', amount, (v) => amount = v, count),
-              columnPicker('Debit', debit, (v) => debit = v, count),
-              columnPicker('Credit', credit, (v) => credit = v, count),
-              columnPicker('Currency', currency, (v) => currency = v, count),
-              columnPicker('Category', category, (v) => category = v, count),
-              CheckboxListTile(
-                value: expense,
-                onChanged: (value) => setState(() {
-                  expense = value ?? false;
-                  drafts = null;
-                }),
-                title: Text(t('Unsigned amounts are expenses')),
-                subtitle: Text(
-                  t(
-                    'Explicit plus and minus signs and debit/credit columns are preserved.',
-                  ),
-                ),
-              ),
-              CheckboxListTile(
-                value: summary,
-                onChanged: (value) => setState(() {
-                  summary = value ?? false;
-                  drafts = null;
-                }),
-                title: Text(t('These are card payment summaries')),
-              ),
-              ExpansionTile(
-                title: Text(t('Source rows')),
-                children: [
-                  for (final row in data.rows)
-                    ListTile(
-                      dense: true,
-                      title: Text(
-                        row
-                            .asMap()
-                            .entries
-                            .map((e) => '${e.key + 1}: ${e.value}')
-                            .join('  |  '),
-                      ),
-                    ),
                 ],
-              ),
-              FilledButton.tonal(
-                onPressed: makeDrafts,
-                child: Text(t('Prepare review')),
-              ),
-            ],
-          ],
-          if (drafts != null) ...[
-            const SizedBox(height: 20),
-            Text(
-              '${t('Review transactions')}: ${drafts!.length}',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            Text(
-              t(
-                'Check dates, amounts, signs and descriptions against the original statement.',
-              ),
-            ),
-            if (drafts!.any((row) => row['signUncertain'] == true))
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  t(
-                    'Choose income or expense for every unclassified transaction before importing.',
+                if (!data.blocked && data.providerRows == null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    t('Map columns'),
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            if (drafts!.any((row) => row['currencyInvalid'] == true))
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  t('Correct invalid currencies before importing.'),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton(
-                  onPressed: () => setState(() {
-                    for (final row in drafts!) {
-                      setDirection(row, true);
-                    }
-                    refreshMatches();
-                  }),
-                  child: Text(t('Mark all as expenses')),
-                ),
-                OutlinedButton(
-                  onPressed: () => setState(() {
-                    for (final row in drafts!) {
-                      setDirection(row, false);
-                    }
-                    refreshMatches();
-                  }),
-                  child: Text(t('Mark all as income')),
-                ),
+                  columnPicker('Date', date, (v) => date = v, count),
+                  columnPicker(
+                    'Description',
+                    description,
+                    (v) => description = v,
+                    count,
+                  ),
+                  columnPicker('Amount', amount, (v) => amount = v, count),
+                  columnPicker('Debit', debit, (v) => debit = v, count),
+                  columnPicker('Credit', credit, (v) => credit = v, count),
+                  columnPicker(
+                    'Currency',
+                    currency,
+                    (v) => currency = v,
+                    count,
+                  ),
+                  columnPicker(
+                    'Category',
+                    category,
+                    (v) => category = v,
+                    count,
+                  ),
+                  CheckboxListTile(
+                    value: expense,
+                    onChanged: (value) => setState(() {
+                      expense = value ?? false;
+                      drafts = null;
+                    }),
+                    title: Text(t('Unsigned amounts are expenses')),
+                    subtitle: Text(
+                      t(
+                        'Explicit plus and minus signs and debit/credit columns are preserved.',
+                      ),
+                    ),
+                  ),
+                  CheckboxListTile(
+                    value: summary,
+                    onChanged: (value) => setState(() {
+                      summary = value ?? false;
+                      drafts = null;
+                    }),
+                    title: Text(t('These are card payment summaries')),
+                  ),
+                  ExpansionTile(
+                    title: Text(t('Source rows')),
+                    children: [
+                      for (final row in data.rows)
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            row
+                                .asMap()
+                                .entries
+                                .map((e) => '${e.key + 1}: ${e.value}')
+                                .join('  |  '),
+                          ),
+                        ),
+                    ],
+                  ),
+                  FilledButton.tonal(
+                    onPressed: makeDrafts,
+                    child: Text(t('Prepare review')),
+                  ),
+                ],
               ],
-            ),
-            if (matches.isNotEmpty)
-              Text(
-                t(
-                  'Possible duplicates or related payments are marked below. Review them before saving.',
+              if (drafts != null) ...[
+                const SizedBox(height: 20),
+                Text(
+                  '${t('Review transactions')}: ${drafts!.length}',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-              ),
-            if (summary)
-              Text(
-                t(
-                  'A statement may contain several cards. Remove rows that do not belong to this account.',
-                ),
-              ),
-            for (final row in List<Map<String, dynamic>>.from(drafts!))
-              Card(
-                child: ListTile(
-                  leading: suggested(row)
-                      ? Tooltip(
-                          message: matchLabel(row),
-                          child: const Icon(Icons.warning_amber),
-                        )
-                      : null,
-                  title: Text(
-                    '${row['description']}  •  ${row['amount']} ${row['currency']}',
-                  ),
-                  subtitle: Text(
-                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['sourcePage'] is int ? '${t('Page')}: ${row['sourcePage']} • ' : ''}${row['pending'] == true ? '${t('Pending')} • ' : ''}${row['billingDate'] != null ? '${t('Billing date')}: ${'${row['billingDate']}'.split('T').first} • ' : ''}${row['rateSource'] == 'statement' && row['amountIls'] is num ? '${t('Statement ILS amount')}: ${row['amountIls']} • ' : ''}${row['classificationUncertain'] == true ? '${t('Choose transaction type')} • ' : ''}${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
-                        ? 'Choose income or expense'
-                        : (row['amount'] as num) < 0
-                        ? 'Expense'
-                        : 'Income')}',
-                  ),
-                  onTap: () => edit(row),
-                  trailing: Wrap(
-                    spacing: 0,
-                    children: [
-                      if (row['classificationUncertain'] == true)
-                        PopupMenuButton<String>(
-                          tooltip: t('Choose transaction type'),
-                          icon: const Icon(Icons.category_outlined),
-                          onSelected: (kind) => setState(() {
-                            row['kind'] = kind == 'payment'
-                                ? 'card_summary'
-                                : 'transaction';
-                            setDirection(row, kind != 'income');
-                            row['classificationUncertain'] = false;
-                            refreshMatches();
-                          }),
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'expense',
-                              child: Text(t('Expense')),
-                            ),
-                            PopupMenuItem(
-                              value: 'income',
-                              child: Text(t('Income')),
-                            ),
-                            PopupMenuItem(
-                              value: 'payment',
-                              child: Text(t('Card payment')),
-                            ),
-                          ],
-                        ),
-                      PopupMenuButton<bool>(
-                        tooltip: t('Choose income or expense'),
-                        icon: Icon(
-                          row['signUncertain'] == true
-                              ? Icons.help_outline
-                              : Icons.swap_vert,
-                        ),
-                        onSelected: (value) => setState(() {
-                          setDirection(row, value);
-                          refreshMatches();
-                        }),
-                        itemBuilder: (_) => [
-                          PopupMenuItem(value: false, child: Text(t('Income'))),
-                          PopupMenuItem(value: true, child: Text(t('Expense'))),
-                        ],
-                      ),
-                      IconButton(
-                        tooltip: t('Remove'),
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() {
-                          drafts!.remove(row);
-                          refreshMatches();
-                        }),
-                      ),
-                    ],
+                Text(
+                  t(
+                    'Check dates, amounts, signs and descriptions against the original statement.',
                   ),
                 ),
-              ),
-            for (final row in drafts!)
-              if (exactMatches.containsKey('${row['id']}'))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${t((exactMatches['${row['id']}']!['pending'] == true) != (row['pending'] == true) ? 'Possible pending match' : 'Exact match already saved')}: '
-                        '${exactMatches['${row['id']}']!['description']} | ${(exactMatches['${row['id']}']!['date'] as String).split('T').first} | '
-                        '${exactMatches['${row['id']}']!['amount']} ${exactMatches['${row['id']}']!['currency']} | '
-                        '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}'
-                        '${exactMatches['${row['id']}']!['pending'] == true ? ' | ${t('Pending')}' : ''}',
+                if (drafts!.any((row) => row['signUncertain'] == true))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      t(
+                        'Choose income or expense for every unclassified transaction before importing.',
                       ),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(
-                          '${row['id']}-${exactMatches['${row['id']}']!['id']}-${duplicateChoices['${row['id']}'] ?? defaultDuplicateChoice(row)}',
-                        ),
-                        initialValue:
-                            duplicateChoices['${row['id']}'] ??
-                            defaultDuplicateChoice(row),
-                        decoration: InputDecoration(
-                          labelText: t('Duplicate action'),
-                        ),
-                        items: [
-                          DropdownMenuItem(
-                            value: 'existing',
-                            child: Text(t('Keep existing; skip imported')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'both',
-                            child: Text(t('Keep both transactions')),
-                          ),
-                          if (widget.onSaveWithFilename != null)
-                            DropdownMenuItem(
-                              value: 'replace',
-                              child: Text(t('Replace existing with imported')),
-                            ),
-                        ],
-                        onChanged: loading
-                            ? null
-                            : (value) => setState(() {
-                                duplicateChoices['${row['id']}'] =
-                                    value ?? 'existing';
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                if (drafts!.any((row) => row['currencyInvalid'] == true))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      t('Correct invalid currencies before importing.'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => setState(() {
+                        for (final row in drafts!) {
+                          setDirection(row, true);
+                        }
+                        refreshMatches();
+                      }),
+                      child: Text(t('Mark all as expenses')),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => setState(() {
+                        for (final row in drafts!) {
+                          setDirection(row, false);
+                        }
+                        refreshMatches();
+                      }),
+                      child: Text(t('Mark all as income')),
+                    ),
+                  ],
+                ),
+                if (matches.isNotEmpty)
+                  Text(
+                    t(
+                      'Possible duplicates or related payments are marked below. Review them before saving.',
+                    ),
+                  ),
+                if (summary)
+                  Text(
+                    t(
+                      'A statement may contain several cards. Remove rows that do not belong to this account.',
+                    ),
+                  ),
+                for (final row in List<Map<String, dynamic>>.from(drafts!)) ...[
+                  if (multiCard &&
+                      (drafts!.indexOf(row) == 0 ||
+                          drafts![drafts!.indexOf(row) - 1]['accountId'] !=
+                              row['accountId']))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        '${t('Account')}: ${accountName('${row['accountId']}')}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  Card(
+                    child: ListTile(
+                      leading: suggested(row)
+                          ? Tooltip(
+                              message: matchLabel(row),
+                              child: const Icon(Icons.warning_amber),
+                            )
+                          : null,
+                      title: Text(
+                        '${row['description']}  •  ${row['amount']} ${row['currency']}',
+                      ),
+                      subtitle: Text(
+                        '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['sourcePage'] is int ? '${t('Page')}: ${row['sourcePage']} • ' : ''}${row['pending'] == true ? '${t('Pending')} • ' : ''}${row['billingDate'] != null ? '${t('Billing date')}: ${'${row['billingDate']}'.split('T').first} • ' : ''}${row['rateSource'] == 'statement' && row['amountIls'] is num ? '${t('Statement ILS amount')}: ${row['amountIls']} • ' : ''}${row['classificationUncertain'] == true ? '${t('Choose transaction type')} • ' : ''}${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
+                            ? 'Choose income or expense'
+                            : (row['amount'] as num) < 0
+                            ? 'Expense'
+                            : 'Income')}',
+                      ),
+                      onTap: () => edit(row),
+                      trailing: Wrap(
+                        spacing: 0,
+                        children: [
+                          if (row['classificationUncertain'] == true)
+                            PopupMenuButton<String>(
+                              tooltip: t('Choose transaction type'),
+                              icon: const Icon(Icons.category_outlined),
+                              onSelected: (kind) => setState(() {
+                                row['kind'] = kind == 'payment'
+                                    ? 'card_summary'
+                                    : 'transaction';
+                                setDirection(row, kind != 'income');
+                                row['classificationUncertain'] = false;
+                                refreshMatches();
                               }),
-                      ),
-                    ],
-                  ),
-                ),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final now = DateTime.now();
-                final row = <String, dynamic>{
-                  'id': 'import-${now.microsecondsSinceEpoch}',
-                  'accountId': widget.accountId,
-                  'date': now.toIso8601String(),
-                  'description': '',
-                  'category': 'Uncategorized',
-                  'amount': 0.0,
-                  'currency': 'ILS',
-                  'amountIls': 0.0,
-                  'signUncertain': true,
-                  'kind': summary ? 'card_summary' : 'transaction',
-                  'linkedIds': <String>[],
-                  'status': 'actual',
-                };
-                if (await edit(row) && mounted) {
-                  setState(() {
-                    drafts!.add(row);
-                    refreshMatches();
-                  });
-                }
-              },
-              icon: const Icon(Icons.add),
-              label: Text(t('Add missing transaction')),
-            ),
-            FilledButton(
-              onPressed:
-                  loading ||
-                      drafts!.isEmpty ||
-                      drafts!
-                          .where((row) => !isSkipped(row))
-                          .any(
-                            (row) =>
-                                row['signUncertain'] == true ||
-                                row['classificationUncertain'] == true ||
-                                row['currencyInvalid'] == true,
-                          )
-                  ? null
-                  : () async {
-                      final replacements = <Map<String, dynamic>>[
-                        for (final row in drafts!)
-                          if (duplicateChoices['${row['id']}'] == 'replace' &&
-                              exactMatches.containsKey('${row['id']}'))
-                            exactMatches['${row['id']}']!,
-                      ];
-                      if (replacements.isNotEmpty) {
-                        final confirmationState = jsonEncode({
-                          'drafts': drafts,
-                          'matches': exactMatches,
-                          'choices': duplicateChoices,
-                        });
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: Text(t('Replace existing transactions?')),
-                            content: Text(
-                              t(
-                                'The selected existing transactions will be deleted and replaced by the imported rows.',
-                              ),
+                              itemBuilder: (_) => [
+                                PopupMenuItem(
+                                  value: 'expense',
+                                  child: Text(t('Expense')),
+                                ),
+                                PopupMenuItem(
+                                  value: 'income',
+                                  child: Text(t('Income')),
+                                ),
+                                PopupMenuItem(
+                                  value: 'payment',
+                                  child: Text(t('Card payment')),
+                                ),
+                              ],
                             ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: Text(t('Cancel')),
+                          PopupMenuButton<bool>(
+                            tooltip: t('Choose income or expense'),
+                            icon: Icon(
+                              row['signUncertain'] == true
+                                  ? Icons.help_outline
+                                  : Icons.swap_vert,
+                            ),
+                            onSelected: (value) => setState(() {
+                              setDirection(row, value);
+                              refreshMatches();
+                            }),
+                            itemBuilder: (_) => [
+                              PopupMenuItem(
+                                value: false,
+                                child: Text(t('Income')),
                               ),
-                              FilledButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                child: Text(t('Replace')),
+                              PopupMenuItem(
+                                value: true,
+                                child: Text(t('Expense')),
                               ),
                             ],
                           ),
-                        );
-                        if (!mounted || confirmed != true || loading) return;
-                        if (confirmationState !=
-                            jsonEncode({
+                          IconButton(
+                            tooltip: t('Remove'),
+                            icon: const Icon(Icons.close),
+                            onPressed: () => setState(() {
+                              drafts!.remove(row);
+                              refreshMatches();
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                for (final row in drafts!)
+                  if (exactMatches.containsKey('${row['id']}'))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${t((exactMatches['${row['id']}']!['pending'] == true) != (row['pending'] == true) ? 'Possible pending match' : 'Exact match already saved')}: '
+                            '${exactMatches['${row['id']}']!['description']} | ${(exactMatches['${row['id']}']!['date'] as String).split('T').first} | '
+                            '${exactMatches['${row['id']}']!['amount']} ${exactMatches['${row['id']}']!['currency']} | '
+                            '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}'
+                            '${exactMatches['${row['id']}']!['pending'] == true ? ' | ${t('Pending')}' : ''}',
+                          ),
+                          DropdownButtonFormField<String>(
+                            key: ValueKey(
+                              '${row['id']}-${exactMatches['${row['id']}']!['id']}-${duplicateChoices['${row['id']}'] ?? defaultDuplicateChoice(row)}',
+                            ),
+                            initialValue:
+                                duplicateChoices['${row['id']}'] ??
+                                defaultDuplicateChoice(row),
+                            decoration: InputDecoration(
+                              labelText: t('Duplicate action'),
+                            ),
+                            items: [
+                              DropdownMenuItem(
+                                value: 'existing',
+                                child: Text(t('Keep existing; skip imported')),
+                              ),
+                              DropdownMenuItem(
+                                value: 'both',
+                                child: Text(t('Keep both transactions')),
+                              ),
+                              if (widget.onSaveWithFilename != null ||
+                                  widget.onSaveMulti != null)
+                                DropdownMenuItem(
+                                  value: 'replace',
+                                  child: Text(
+                                    t('Replace existing with imported'),
+                                  ),
+                                ),
+                            ],
+                            onChanged: loading
+                                ? null
+                                : (value) => setState(() {
+                                    duplicateChoices['${row['id']}'] =
+                                        value ?? 'existing';
+                                  }),
+                          ),
+                        ],
+                      ),
+                    ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final now = DateTime.now();
+                    var destination = selectedAccountId;
+                    if (multiCard) {
+                      destination =
+                          await showDialog<String>(
+                            context: context,
+                            builder: (context) => SimpleDialog(
+                              title: Text(t('Choose an account')),
+                              children: [
+                                for (final account in cardAccounts)
+                                  SimpleDialogOption(
+                                    onPressed: () => Navigator.pop(
+                                      context,
+                                      '${account['id']}',
+                                    ),
+                                    child: Text(
+                                      '${account['name'] ?? account['id']}',
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ) ??
+                          '';
+                      if (!mounted || destination.isEmpty) return;
+                    }
+                    final row = <String, dynamic>{
+                      'id': 'import-${now.microsecondsSinceEpoch}',
+                      'accountId': destination,
+                      'date': now.toIso8601String(),
+                      'description': '',
+                      'category': 'Uncategorized',
+                      'amount': 0.0,
+                      'currency': 'ILS',
+                      'amountIls': 0.0,
+                      'signUncertain': true,
+                      'kind': summary ? 'card_summary' : 'transaction',
+                      'linkedIds': <String>[],
+                      'status': 'actual',
+                    };
+                    if (await edit(row) && mounted) {
+                      setState(() {
+                        drafts!.add(row);
+                        if (multiCard) {
+                          drafts!.sort(
+                            (a, b) => accountName('${a['accountId']}')
+                                .compareTo(accountName('${b['accountId']}')),
+                          );
+                        }
+                        refreshMatches();
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.add),
+                  label: Text(t('Add missing transaction')),
+                ),
+                FilledButton(
+                  onPressed:
+                      loading ||
+                          drafts!.isEmpty ||
+                          drafts!
+                              .where((row) => !isSkipped(row))
+                              .any(
+                                (row) =>
+                                    row['signUncertain'] == true ||
+                                    row['classificationUncertain'] == true ||
+                                    row['currencyInvalid'] == true,
+                              )
+                      ? null
+                      : () async {
+                          final replacements = <Map<String, dynamic>>[
+                            for (final row in drafts!)
+                              if (duplicateChoices['${row['id']}'] ==
+                                      'replace' &&
+                                  exactMatches.containsKey('${row['id']}'))
+                                exactMatches['${row['id']}']!,
+                          ];
+                          if (replacements.isNotEmpty) {
+                            final confirmationState = jsonEncode({
                               'drafts': drafts,
                               'matches': exactMatches,
                               'choices': duplicateChoices,
-                            })) {
-                          setState(
-                            () => error = t(
-                              'Review changed; please confirm again.',
-                            ),
-                          );
-                          return;
-                        }
-                      }
-                      setState(() => loading = true);
-                      try {
-                        final rows = drafts!
-                            .where((row) => !isSkipped(row))
-                            .map((row) => Map<String, dynamic>.from(row))
-                            .toList();
-                        if (widget.onSaveWithFilename != null) {
-                          await widget.onSaveWithFilename!(
-                            rows,
-                            fileName ?? '',
-                            replacements,
-                          );
-                        } else {
-                          await widget.onSave(rows);
-                        }
-                        if (context.mounted) Navigator.pop(context);
-                      } catch (_) {
-                        if (mounted) {
-                          setState(
-                            () =>
-                                error = t('Could not save these transactions.'),
-                          );
-                        }
-                      } finally {
-                        if (mounted) setState(() => loading = false);
-                      }
-                    },
-              child: Text(t('Confirm import')),
-            ),
-          ],
-        ],
+                            });
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: Text(
+                                  t('Replace existing transactions?'),
+                                ),
+                                content: Text(
+                                  t(
+                                    'The selected existing transactions will be deleted and replaced by the imported rows.',
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: Text(t('Cancel')),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: Text(t('Replace')),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (!mounted || confirmed != true || loading) {
+                              return;
+                            }
+                            if (confirmationState !=
+                                jsonEncode({
+                                  'drafts': drafts,
+                                  'matches': exactMatches,
+                                  'choices': duplicateChoices,
+                                })) {
+                              setState(
+                                () => error = t(
+                                  'Review changed; please confirm again.',
+                                ),
+                              );
+                              return;
+                            }
+                          }
+                          setState(() => loading = true);
+                          try {
+                            final rows = drafts!
+                                .where((row) => !isSkipped(row))
+                                .map((row) => Map<String, dynamic>.from(row))
+                                .toList();
+                            if (multiCard) {
+                              final bindings = <Map<String, dynamic>>[
+                                for (final entry in cardDestinations.entries)
+                                  if (entry.value != _skipCard)
+                                    {
+                                      'provider': preview!.format.substring(4),
+                                      'cardSuffix': entry.key,
+                                      'accountId': entry.value,
+                                    },
+                              ];
+                              final used = <String>{
+                                ...bindings.map((b) => '${b['accountId']}'),
+                                ...rows.map((row) => '${row['accountId']}'),
+                              };
+                              final skippedMatches = <Map<String, dynamic>>[
+                                for (final row in drafts!)
+                                  if (isSkipped(row) &&
+                                      exactMatches.containsKey('${row['id']}'))
+                                    exactMatches['${row['id']}']!,
+                              ];
+                              await widget.onSaveMulti!(
+                                rows,
+                                fileName ?? '',
+                                replacements,
+                                stagedAccounts
+                                    .where(
+                                      (account) =>
+                                          used.contains('${account['id']}'),
+                                    )
+                                    .toList(),
+                                bindings,
+                                skippedMatches,
+                              );
+                            } else if (widget.onSaveWithFilename != null) {
+                              await widget.onSaveWithFilename!(
+                                rows,
+                                fileName ?? '',
+                                replacements,
+                              );
+                            } else {
+                              await widget.onSave(rows);
+                            }
+                            if (context.mounted) {
+                              setState(() => loading = false);
+                              await WidgetsBinding.instance.endOfFrame;
+                              if (context.mounted) Navigator.pop(context);
+                            }
+                          } catch (exception) {
+                            if (context.mounted) {
+                              if (widget.hasPendingSaveFailure?.call() ==
+                                  true) {
+                                await showDialog<void>(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (context) => AlertDialog(
+                                    title: Text(t('Changes not saved')),
+                                    content: Text(
+                                      t(
+                                        'Import changes remain in memory but are not saved. Return to the diary and use Retry to save them.',
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: Text(t('OK')),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (mounted) {
+                                  setState(() => loading = false);
+                                  await WidgetsBinding.instance.endOfFrame;
+                                  if (context.mounted) Navigator.pop(context);
+                                }
+                              } else {
+                                setState(
+                                  () => error = t(
+                                    exception is StateError &&
+                                            exception.message == 'A transaction changed since review. Review it again.'
+                                        ? 'A transaction changed since review. Close and reopen the import to review again.'
+                                        : 'Could not save these transactions.',
+                                  ),
+                                );
+                              }
+                            }
+                          } finally {
+                            if (mounted) setState(() => loading = false);
+                          }
+                        },
+                  child: Text(t('Confirm import')),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -42,6 +42,11 @@ class ImportHistoryScreen extends StatelessWidget {
                 Text(
                   '${rows.length} ${tr('transactions')} • ${tr('Edited transactions')}: ${rows.where((row) => edited.contains('${row['id']}')).length}',
                 ),
+                for (final account in controller.accounts)
+                  if (rows.any((row) => row['accountId'] == account['id']))
+                    Text(
+                      "${account['name'] ?? ''}: ${rows.where((row) => row['accountId'] == account['id']).length} ${tr('transactions')}",
+                    ),
                 const SizedBox(height: 8),
                 if (rows.isEmpty)
                   Text(tr('No transactions remain in this statement.')),
@@ -114,14 +119,20 @@ class ImportHistoryScreen extends StatelessWidget {
             final count = entries
                 .where((row) => ids.contains('${row['id']}'))
                 .length;
-            final account = controller.accounts
-                .where((a) => a['id'] == batch['accountId'])
-                .firstOrNull;
+            final accountIds =
+                (batch['accountIds'] as List? ?? [batch['accountId']])
+                    .map((id) => '$id')
+                    .toSet();
+            final accountNames = controller.accounts
+                .where((account) => accountIds.contains('${account['id']}'))
+                .map((account) => '${account['name'] ?? ''}')
+                .where((name) => name.isNotEmpty)
+                .join(', ');
             return Card(
               child: ListTile(
                 title: Text('${batch['fileName']}'),
                 subtitle: Text(
-                  '${account?['name'] ?? ''} • ${tr('Imported')}: ${'${batch['importedAt']}'.split('T').first} • $count ${tr('transactions')}',
+                  '$accountNames • ${tr('Imported')}: ${'${batch['importedAt']}'.split('T').first} • $count ${tr('transactions')}',
                 ),
                 trailing: IconButton(
                   tooltip: tr('Delete'),

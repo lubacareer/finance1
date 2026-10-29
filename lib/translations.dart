@@ -1,5 +1,29 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'A transaction changed since review. Close and reopen the import to review again.': 'תנועה השתנתה מאז הבדיקה. יש לסגור ולפתוח מחדש את הייבוא כדי לבדוק שוב.',
+    'Changes not saved': 'השינויים לא נשמרו',
+    'Import changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'שינויי הייבוא נותרו בזיכרון אך לא נשמרו. חזרו ליומן והשתמשו בניסיון חוזר כדי לשמור אותם.',
+    'Card identifiers show only the last four digits. Check the statement to confirm each card.': 'מזהי הכרטיסים מציגים רק את ארבע הספרות האחרונות. יש לבדוק בדוח ולאשר כל כרטיס.',
+    'Choose a statement. Nothing is saved until you confirm.':
+        'בחרו דוח. דבר לא יישמר לפני האישור.',
+    'Choose an account before importing.': 'יש לבחור חשבון לפני הייבוא.',
+    'Create credit card account': 'יצירת חשבון כרטיס אשראי',
+    'Create': 'יצירה',
+    'Choose a destination or skip each card.':
+        'יש לבחור חשבון יעד או לדלג על כל כרטיס.',
+    'Each card must have a different account.':
+        'יש לבחור חשבון נפרד לכל כרטיס.',
+    'Destination for card': 'חשבון יעד לכרטיס',
+    'Previous choice; confirm again': 'בחירה קודמת; יש לאשר שוב',
+    'Skip this card': 'דילוג על כרטיס זה',
+    'Unidentified entries: unknown page': 'תנועות לא מזוהות: עמוד לא ידוע',
+    'Unidentified entries on page {page}': 'תנועות לא מזוהות בעמוד {page}',
+    'Assign only after checking the statement; otherwise these rows are skipped.':
+        'יש לשייך רק לאחר בדיקת הדוח; אחרת ייעשה דילוג על השורות.',
+    'Skip unidentified entries': 'דילוג על תנועות לא מזוהות',
+    'Choose an account for each card or skip it.':
+        'יש לבחור חשבון לכל כרטיס או לדלג עליו.',
+    'Choose an account': 'בחירת חשבון',
     'Include unidentified CAL entries with unknown page for the selected card':
         'לכלול תנועות כאל לא מזוהות מעמוד לא ידוע עבור הכרטיס שנבחר',
     'Page': 'עמוד',
@@ -329,6 +353,31 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'A transaction changed since review. Close and reopen the import to review again.': 'Операция изменилась после проверки. Закройте и снова откройте импорт для повторной проверки.',
+    'Changes not saved': 'Изменения не сохранены',
+    'Import changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'Изменения импорта остались в памяти, но не сохранены. Вернитесь в дневник и нажмите «Повторить», чтобы сохранить их.',
+    'Card identifiers show only the last four digits. Check the statement to confirm each card.': 'Идентификаторы показывают только последние четыре цифры. Сверьте каждую карту с выпиской.',
+    'Choose a statement. Nothing is saved until you confirm.':
+        'Выберите выписку. Данные сохранятся только после подтверждения.',
+    'Choose an account before importing.': 'Перед импортом выберите счёт.',
+    'Create credit card account': 'Создать счёт кредитной карты',
+    'Create': 'Создать',
+    'Choose a destination or skip each card.':
+        'Для каждой карты выберите счёт или пропустите её.',
+    'Each card must have a different account.':
+        'Для каждой карты нужен отдельный счёт.',
+    'Destination for card': 'Счёт для карты',
+    'Previous choice; confirm again': 'Предыдущий выбор; подтвердите снова',
+    'Skip this card': 'Пропустить эту карту',
+    'Unidentified entries: unknown page':
+        'Неопознанные операции: страница неизвестна',
+    'Unidentified entries on page {page}':
+        'Неопознанные операции на странице {page}',
+    'Assign only after checking the statement; otherwise these rows are skipped.': 'Назначайте только после проверки выписки; иначе строки будут пропущены.',
+    'Skip unidentified entries': 'Пропустить неопознанные операции',
+    'Choose an account for each card or skip it.':
+        'Выберите счёт для каждой карты или пропустите её.',
+    'Choose an account': 'Выберите счёт',
     'Include unidentified CAL entries with unknown page for the selected card': 'Включить неопознанные операции CAL с неизвестной страницы для выбранной карты',
     'Page': 'Страница',
     'Include unidentified CAL entries from page {page} for the selected card': 'Включить неопознанные операции CAL со страницы {page} для выбранной карты',
