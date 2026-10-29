@@ -1,5 +1,13 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Page {page} has no readable OCR text; add its transactions manually.': 'לא נמצא טקסט קריא בזיהוי התווים בעמוד {page}; הוסיפו את התנועות שבו ידנית.',
+    'Page {page} was read with OCR; confirm every amount and direction against the original.':
+        'עמוד {page} נקרא בזיהוי תווים; בדקו כל סכום וסוג תנועה מול המקור.',
+    'Page {page}: check for transactions embedded in images; selectable text may not include every row.': 'עמוד {page}: בדקו אם יש תנועות בתוך תמונות; הטקסט שניתן לבחור עשוי שלא לכלול את כל השורות.',
+    'Page {page}: offline OCR is unavailable or failed its integrity check; add its transactions manually.': 'עמוד {page}: זיהוי התווים ללא חיבור אינו זמין או שבדיקת תקינותו נכשלה; הוסיפו את התנועות ידנית.',
+    'Page {page}: OCR failed; add its transactions manually.':
+        'עמוד {page}: זיהוי התווים נכשל; הוסיפו את התנועות ידנית.',
+    'Page {page} contains unreadable or uncertain bank rows; compare it with the original and add missing transactions manually.': 'עמוד {page} מכיל שורות בנק שלא ניתן לקרוא או שהזיהוי שלהן אינו ודאי; השוו למקור והוסיפו תנועות חסרות ידנית.',
     'Discount': 'דיסקונט',
     'Review changed; please confirm again.': 'פרטי הבדיקה השתנו; יש לאשר שוב.',
     'A transaction changed since review. Review it again.':
@@ -257,6 +265,12 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Page {page} has no readable OCR text; add its transactions manually.': 'На странице {page} нет текста, распознанного OCR; добавьте её операции вручную.',
+    'Page {page} was read with OCR; confirm every amount and direction against the original.': 'Страница {page} распознана с помощью OCR; сверьте каждую сумму и направление операции с оригиналом.',
+    'Page {page}: check for transactions embedded in images; selectable text may not include every row.': 'Страница {page}: проверьте операции внутри изображений; выделяемый текст может включать не все строки.',
+    'Page {page}: offline OCR is unavailable or failed its integrity check; add its transactions manually.': 'Страница {page}: автономное распознавание недоступно или не прошло проверку целостности; добавьте операции вручную.',
+    'Page {page}: OCR failed; add its transactions manually.': 'Страница {page}: распознавание OCR не удалось; добавьте операции вручную.',
+    'Page {page} contains unreadable or uncertain bank rows; compare it with the original and add missing transactions manually.': 'Страница {page} содержит нечитаемые или сомнительные строки банка; сверьте её с оригиналом и добавьте недостающие операции вручную.',
     'Discount': 'Дисконт',
     'Review changed; please confirm again.':
         'Данные проверки изменились; подтвердите ещё раз.',

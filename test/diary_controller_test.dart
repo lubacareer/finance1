@@ -313,16 +313,22 @@ void main() {
   );
 
   test('deletions and overrides follow the source schedule', () async {
-    final now = DateTime.now();
+    final now = DateTime(2026, 3, 1);
+    diary.dispose();
+    diary = DiaryController(
+      Vault(File('${temp.path}/diary.vault')),
+      clock: () => now,
+    );
+    await diary.unlock('synthetic-passphrase');
     final date = DateTime(
       now.year,
       now.month - 1,
-      1,
+      2,
     ).toIso8601String().substring(0, 10);
     final movedDate = DateTime(
       now.year,
       now.month - 1,
-      2,
+      1,
     ).toIso8601String().substring(0, 10);
     final source = {
       ...entry('schedule', 'a', 'transaction'),

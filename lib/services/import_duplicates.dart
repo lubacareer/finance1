@@ -1,12 +1,16 @@
 import 'currency.dart';
 
+// Keep each field separate so even a separator inside user-provided text
+// cannot make two different transactions share a key.
+typedef _ImportKey = (String, int, int, int, String, String, String, String);
+
 /// Matches reviewed drafts to saved rows one-to-one. Never compare drafts to
 /// each other: identical purchases in the same statement can be legitimate.
 Map<String, Map<String, dynamic>> exactImportMatches(
   List<Map<String, dynamic>> drafts,
   List<Map<String, dynamic>> existing,
 ) {
-  String? key(Map<String, dynamic> row) {
+  _ImportKey? key(Map<String, dynamic> row) {
     if (row['signUncertain'] == true ||
         row['currencyInvalid'] == true ||
         row['status'] == 'predicted' ||
@@ -31,19 +35,19 @@ Map<String, Map<String, dynamic>> exactImportMatches(
         description.isEmpty) {
       return null;
     }
-    return [
-      account,
+    return (
+      '$account',
       date.year,
       date.month,
       date.day,
-      amount.toDouble(),
+      amount.toDouble().toString(),
       currency,
       description,
-      row['kind'] ?? 'transaction',
-    ].join('\u0000');
+      '${row['kind'] ?? 'transaction'}',
+    );
   }
 
-  final pools = <String, List<Map<String, dynamic>>>{};
+  final pools = <_ImportKey, List<Map<String, dynamic>>>{};
   for (final row in existing) {
     final k = key(row);
     if (k != null) (pools[k] ??= []).add(row);

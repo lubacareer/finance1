@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -55,6 +56,41 @@ BankPdfPage positionedOcrPage(
   }
   for (final line in lines) {
     line.sort((a, b) => b.x2.compareTo(a.x2));
+    // Columns and Hebrew words are read right-to-left. Within a close run of
+    // Latin/numeric words, however, the physical order is left-to-right (for
+    // example OCR may split 1 234,56 into two words). Do not reverse across
+    // column gaps or across RTL words.
+    bool isLtr(_OcrWord word) =>
+        RegExp(
+          r'^[\x21-\x7e\u00a0\u00a3\u00c0-\u024f\u1e00-\u1eff\u20aa\u20ac\ufb00-\ufb06]+$',
+        ).hasMatch(word.text) &&
+        RegExp(r'[A-Za-z0-9\u00c0-\u024f\u1e00-\u1eff\ufb00-\ufb06]')
+            .hasMatch(word.text);
+    bool adjacent(_OcrWord right, _OcrWord left) {
+      final gap = right.x1 - left.x2;
+      final glyphHeight = math.max(right.y2 - right.y1, left.y2 - left.y1);
+      return gap >= 0 &&
+          gap <= glyphHeight &&
+          gap * width / imageWidth <= width * .018;
+    }
+
+    var start = 0;
+    while (start < line.length) {
+      if (!isLtr(line[start])) {
+        start++;
+        continue;
+      }
+      var end = start + 1;
+      while (end < line.length &&
+          isLtr(line[end]) &&
+          adjacent(line[end - 1], line[end])) {
+        end++;
+      }
+      if (end - start > 1) {
+        line.setRange(start, end, line.sublist(start, end).reversed);
+      }
+      start = end;
+    }
   }
   final text = StringBuffer();
   final rects = <PdfRect>[];

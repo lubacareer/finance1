@@ -55,4 +55,27 @@ void main() {
     expect(exactImportMatches(invalid, [row('saved')]), isEmpty);
     expect(exactImportMatches([row('draft')], invalid), isEmpty);
   });
+  test('does not confuse embedded separators in different fields', () {
+    final drafts = [row('draft', description: 'shop\u0000card_summary')];
+    final saved = [
+      row('saved', description: 'shop', kind: 'card_summary\u0000transaction'),
+    ];
+    expect(exactImportMatches(drafts, saved), isEmpty);
+  });
+  test('keeps calendar components separate and preserves signed zero', () {
+    expect(
+      exactImportMatches(
+        [row('draft', date: '2026-01-23')],
+        [row('saved', date: '2026-12-03')],
+      ),
+      isEmpty,
+    );
+    expect(
+      exactImportMatches(
+        [row('draft', amount: -0.0)],
+        [row('saved', amount: 0.0)],
+      ),
+      isEmpty,
+    );
+  });
 }

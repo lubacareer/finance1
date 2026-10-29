@@ -298,6 +298,114 @@ void main() {
     expect(candidates.last['amount'], -123.45);
   });
 
+  test('positioned OCR restores LTR word runs without crossing columns', () {
+    const hocr = '''<div class="ocr_line">
+      <span class="ocrx_word" title="bbox 520 212 555 222">03/10/2026</span>
+      <span class="ocrx_word" title="bbox 405 212 425 222">שלום</span>
+      <span class="ocrx_word" title="bbox 300 212 350 222">Synthetic</span>
+      <span class="ocrx_word" title="bbox 355 212 390 222">salary</span>
+      <span class="ocrx_word" title="bbox 196 212 200 222">1</span>
+      <span class="ocrx_word" title="bbox 204 212 230 222">234,56</span>
+    </div>''';
+    final scanned = positionedOcrPage(hocr, 600, 842, 600, 842);
+    expect(scanned.text, contains('שלום Synthetic salary 1 234,56'));
+    final bank = parseBankDocument([leumi(), scanned])!;
+    expect(bank.incompleteCount, 0);
+    expect(bank.uncertainRows, {3});
+    final rows = ImportPreview(
+      format: 'pdf',
+      rows: bank.rows,
+      warnings: [],
+      uncertainRows: bank.uncertainRows,
+    ).candidates(accountId: 'a');
+    expect(rows.last['amount'], -1234.56);
+    expect(rows.last['signUncertain'], isTrue);
+    expect(rows.last['description'], contains('Synthetic salary'));
+  });
+
+  test('split OCR grouping is recognized for all supported bank layouts', () {
+    BankPdfPage scan(double width, int dateRight, int amountRight) {
+      final amountStart = amountRight - 34;
+      final descriptionStart = (width * .59).round();
+      return positionedOcrPage(
+        '''<div class="ocr_line">
+        <span class="ocrx_word" title="bbox ${dateRight - 40} 212 $dateRight 222">03/10/2026</span>
+        <span class="ocrx_word" title="bbox $descriptionStart 212 ${descriptionStart + 50} 222">Synthetic</span>
+        <span class="ocrx_word" title="bbox $amountStart 212 ${amountStart + 4} 222">1</span>
+        <span class="ocrx_word" title="bbox ${amountStart + 8} 212 $amountRight 222">234,56</span>
+      </div>''',
+        width,
+        842,
+        width.toInt(),
+        842,
+      );
+    }
+
+    for (final bankCase in [
+      (header: leumi(), scan: scan(600, 555, 230), amount: -1234.56),
+      (header: beinleumi(), scan: scan(652, 580, 250), amount: -1234.56),
+      (header: discount(), scan: scan(600, 560, 181), amount: 1234.56),
+    ]) {
+      final result = parseBankDocument([bankCase.header, bankCase.scan])!;
+      expect(result.incompletePages, isEmpty, reason: result.provider);
+      final rows = ImportPreview(
+        format: 'pdf',
+        rows: result.rows,
+        warnings: [],
+        uncertainRows: result.uncertainRows,
+      ).candidates(accountId: 'a');
+      expect(rows.last['amount'], bankCase.amount, reason: result.provider);
+      expect(rows.last['signUncertain'], isTrue, reason: result.provider);
+    }
+  });
+
+  test('a nearby numeric fragment after an amount requires review', () {
+    for (final value in ['234,56 1', '234,56 12']) {
+      final page = FakePdfPage(600);
+      page.word('תאריך', 0, 650, right: 555);
+      page.word('חובה', 0, 650, right: 230);
+      page.word('זכות', 0, 650, right: 165);
+      page.word('יתרה', 0, 650, right: 95);
+      page.newline();
+      page.word('01/10/2026', 0, 630, right: 555);
+      page.word('Synthetic', 300, 630);
+      page.word(value, 0, 630, right: 230);
+      final result = parseBankDocument([page.build()])!;
+      expect(result.rows.length, 1, reason: value);
+      expect(result.incompletePages, {1}, reason: value);
+    }
+  });
+
+  test('separate OCR money columns are never reordered as one LTR run', () {
+    const hocr = '''<div class="ocr_line">
+      <span class="ocrx_word" title="bbox 520 212 555 222">03/10/2026</span>
+      <span class="ocrx_word" title="bbox 300 212 350 222">Synthetic</span>
+      <span class="ocrx_word" title="bbox 200 212 230 222">111.11</span>
+      <span class="ocrx_word" title="bbox 135 212 165 222">222.22</span>
+    </div>''';
+    final scanned = positionedOcrPage(hocr, 600, 842, 600, 842);
+    expect(scanned.text, contains('111.11 222.22'));
+    final result = parseBankDocument([leumi(), scanned])!;
+    expect(result.incompletePages, {2});
+    expect(result.rows.length, 3); // The conflicting scanned row is omitted.
+  });
+
+  test('accented Latin OCR words retain LTR order next to Hebrew', () {
+    const hocr = '''<div class="ocr_line">
+      <span class="ocrx_word" title="bbox 520 212 555 222">03/10/2026</span>
+      <span class="ocrx_word" title="bbox 420 212 440 222">שלום</span>
+      <span class="ocrx_word" title="bbox 300 212 330 222">café</span>
+      <span class="ocrx_word" title="bbox 335 212 370 222">crème</span>
+      <span class="ocrx_word" title="bbox 200 212 230 222">123.45</span>
+    </div>''';
+    final scanned = positionedOcrPage(hocr, 600, 842, 600, 842);
+    expect(scanned.text, contains('שלום café crème 123.45'));
+    final result = parseBankDocument([leumi(), scanned])!;
+    expect(result.incompletePages, isEmpty);
+    expect(result.rows.last[1], 'שלום café crème');
+    expect(result.uncertainRows, {3});
+  });
+
   test('bank header date and total do not suppress scanned-page OCR', () {
     final header = FakePdfPage(600);
     header.word('תאריך', 0, 650, right: 555);

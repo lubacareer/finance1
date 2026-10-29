@@ -295,6 +295,10 @@ BankPdfResult? parseBankDocument(
             b = (amount.right - header.balance).abs();
         final closest = math.min(d, math.min(c, b));
         if (closest > page.width * .045 || closest == b) continue;
+        if (amount.match.end > end) {
+          invalidAmount = true;
+          continue;
+        }
         final value = amount.match.group(0)!.trim();
         if (header.provider == 'Discount') {
           // Masking must never turn a clipped prefix or trailing sign into a
@@ -340,11 +344,27 @@ BankPdfResult? parseBankDocument(
           (previousRect.right - amount.left).abs(),
           (amount.right - previousRect.left).abs(),
         );
-        final partialGroup =
+        final partialPrefix =
             !value.startsWith('₪') &&
             previousRect.isNotEmpty &&
             (previousRect.top - amount.y).abs() < 4 &&
             gap < page.width * .018;
+        // OCR can emit split groups in reverse text order: for example,
+        // "234,56 1". Never accept just the decimal suffix as a complete
+        // amount when a nearby numeric token remains after it.
+        final following = page.text.substring(amount.match.end, end);
+        final suffix = RegExp(r'^[ \u00a0]+[\d.,]').firstMatch(following);
+        final nextRect = suffix == null
+            ? PdfRect.empty
+            : page.rects[amount.match.end + suffix.end - 1];
+        final nextGap = math.min(
+          (nextRect.right - amount.left).abs(),
+          (amount.right - nextRect.left).abs(),
+        );
+        final partialSuffix =
+            nextRect.isNotEmpty &&
+            (nextRect.top - amount.y).abs() < 4 &&
+            nextGap < page.width * .018;
         var crossesColumns = false;
         for (final whitespace in RegExp(
           r'[ \u00a0]+',
@@ -364,7 +384,10 @@ BankPdfResult? parseBankDocument(
             crossesColumns = true;
           }
         }
-        if (partialGroup || crossesColumns || !_validAmount.hasMatch(value)) {
+        if (partialPrefix ||
+            partialSuffix ||
+            crossesColumns ||
+            !_validAmount.hasMatch(value)) {
           invalidAmount = true;
           continue;
         }

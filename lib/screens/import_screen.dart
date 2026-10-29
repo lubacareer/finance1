@@ -99,21 +99,25 @@ class _ImportScreenState extends State<ImportScreen> {
   String t(String key) => widget.tr(key);
 
   String warningText(String warning) {
-    final unreadable = RegExp(
-      r'^Page (\d+) has no readable text; add its transactions manually\.$',
-    ).firstMatch(warning);
-    if (unreadable != null) {
-      return t(
-        'Page {page} has no readable text; add its transactions manually.',
-      ).replaceAll('{page}', unreadable[1]!);
-    }
-    final ocr = RegExp(
-      r'^Page (\d+) was read with OCR; check it carefully against the original\.$',
-    ).firstMatch(warning);
-    if (ocr != null) {
-      return t(
-        'Page {page} was read with OCR; check it carefully against the original.',
-      ).replaceAll('{page}', ocr[1]!);
+    const templates = [
+      'Page {page} has no readable text; add its transactions manually.',
+      'Page {page} was read with OCR; check it carefully against the original.',
+      'Page {page} has no readable OCR text; add its transactions manually.',
+      'Page {page} was read with OCR; confirm every amount and direction against the original.',
+      'Page {page}: check for transactions embedded in images; selectable text may not include every row.',
+      'Page {page}: offline OCR is unavailable or failed its integrity check; add its transactions manually.',
+      'Page {page}: OCR failed; add its transactions manually.',
+      'Page {page} contains unreadable or uncertain bank rows; compare it with the original and add missing transactions manually.',
+    ];
+    for (final template in templates) {
+      final parts = template.split('{page}');
+      final pattern = RegExp(
+        '^${RegExp.escape(parts[0])}(\\d+)${RegExp.escape(parts[1])}\$',
+      );
+      final match = pattern.firstMatch(warning);
+      if (match != null) {
+        return t(template).replaceAll('{page}', match[1]!);
+      }
     }
     return t(warning);
   }
