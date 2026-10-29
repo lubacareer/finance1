@@ -1,9 +1,11 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/import_service.dart';
+import '../services/currency.dart';
 import '../services/insights.dart';
 
 /// Standalone import flow. [onSave] is invoked only after explicit review.
@@ -15,6 +17,7 @@ class ImportScreen extends StatefulWidget {
     required this.onSave,
     this.existing = const [],
     this.accounts = const [],
+    this.parseFile,
   });
 
   final String accountId;
@@ -22,6 +25,7 @@ class ImportScreen extends StatefulWidget {
   final Future<void> Function(List<Map<String, dynamic>>) onSave;
   final List<Map<String, dynamic>> existing;
   final List<Map<String, dynamic>> accounts;
+  final Future<ImportPreview> Function(Uint8List, String)? parseFile;
 
   @override
   State<ImportScreen> createState() => _ImportScreenState();
@@ -36,6 +40,29 @@ class _ImportScreenState extends State<ImportScreen> {
   bool summary = false;
   int? date, description, amount, debit, credit, currency, category;
   List<Map<String, dynamic>>? drafts;
+  List<Map<String, dynamic>> matches = [];
+
+  void refreshMatches() {
+    final current = drafts;
+    if (current == null) {
+      matches = [];
+      return;
+    }
+    matches = Insights.matchCandidates(
+      [...widget.existing, ...current],
+      accounts: widget.accounts,
+      involvingIds: current.map((row) => '${row['id']}').toSet(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant ImportScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.existing != oldWidget.existing ||
+        widget.accounts != oldWidget.accounts) {
+      refreshMatches();
+    }
+  }
 
   String t(String key) => widget.tr(key);
 
@@ -60,17 +87,20 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> pick() async {
-    final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'xls', 'xlsx', 'csv', 'tsv', 'html'],
-    );
-    if (file == null) return;
     setState(() {
       loading = true;
       error = null;
-      drafts = null;
     });
     try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xls', 'xlsx', 'csv', 'tsv', 'html'],
+      );
+      if (file == null || !mounted) return;
+      setState(() {
+        drafts = null;
+        refreshMatches();
+      });
       final bytes = await file.readAsBytes().whenComplete(() async {
         // Android may have copied the selected document to the picker's own
         // private cache. Never delete the source document itself.
@@ -80,7 +110,10 @@ class _ImportScreenState extends State<ImportScreen> {
           // This operation is unsupported on some desktop platforms.
         }
       });
-      final result = await ImportService().parse(bytes, file.name);
+      final result = await (widget.parseFile ?? ImportService().parse)(
+        bytes,
+        file.name,
+      );
       final suggested = result.suggestMapping();
       if (!mounted) return;
       setState(() {
@@ -147,6 +180,7 @@ class _ImportScreenState extends State<ImportScreen> {
       for (var i = 0; i < drafts!.length; i++) {
         drafts![i]['id'] = 'import-$stamp-$i';
       }
+      refreshMatches();
       error = drafts!.isEmpty
           ? t(
               'No complete transactions found. Check the mapping or add entries manually.',
@@ -220,13 +254,14 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     final changed = await Navigator.of(context).push(route);
     var valid = false;
-    if (changed == true) {
+    if (changed == true && mounted) {
       final parsedDate = parseStatementDate(dateController.text);
       final parsedAmount = parseStatementAmount(amountController.text);
+      final newCurrency = normalizeCurrency(currencyController.text);
       if (parsedDate != null &&
           parsedAmount != null &&
+          newCurrency != null &&
           descriptionController.text.trim().isNotEmpty) {
-        final newCurrency = currencyController.text.trim().toUpperCase();
         final enteredAmount = amountController.text.trim();
         final explicitSign =
             enteredAmount.startsWith('+') ||
@@ -245,14 +280,22 @@ class _ImportScreenState extends State<ImportScreen> {
               ? 'planned'
               : 'actual';
           row['description'] = descriptionController.text.trim();
-          row['category'] = categoryController.text.trim();
+          row['category'] = categoryController.text.trim().isEmpty
+              ? 'Uncategorized'
+              : categoryController.text.trim();
           row['currency'] = newCurrency;
+          row['currencyInvalid'] = false;
           row['amountIls'] = newCurrency == 'ILS' ? parsedAmount : null;
+          refreshMatches();
         });
         valid = true;
       } else if (mounted) {
         setState(
-          () => error = t('Enter a valid date, description and amount.'),
+          () => error = t(
+            newCurrency == null
+                ? 'Enter a valid currency code.'
+                : 'Enter a valid date, description and amount.',
+          ),
         );
       }
     }
@@ -299,18 +342,20 @@ class _ImportScreenState extends State<ImportScreen> {
     final data = preview;
     final count =
         data?.rows.fold<int>(0, (max, row) => math.max(max, row.length)) ?? 0;
-    final matches = drafts == null
-        ? <Map<String, dynamic>>[]
-        : Insights.matchCandidates([
-            ...widget.existing,
-            ...drafts!,
-          ], accounts: widget.accounts);
     bool suggested(Map<String, dynamic> row) => matches.any(
-      (m) => m['firstId'] == row['id'] || m['secondId'] == row['id'],
+      (m) =>
+          m['firstId'] == row['id'] ||
+          m['secondId'] == row['id'] ||
+          ((m['purchaseIds'] as List?)?.contains(row['id']) ?? false),
     );
     String matchLabel(Map<String, dynamic> row) {
       final ids = matches
-          .where((m) => m['firstId'] == row['id'] || m['secondId'] == row['id'])
+          .where(
+            (m) =>
+                m['firstId'] == row['id'] ||
+                m['secondId'] == row['id'] ||
+                ((m['purchaseIds'] as List?)?.contains(row['id']) ?? false),
+          )
           .map((m) => m['firstId'] == row['id'] ? m['secondId'] : m['firstId'])
           .toSet();
       final others = [
@@ -352,64 +397,74 @@ class _ImportScreenState extends State<ImportScreen> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(warningText(warning)),
               ),
-            const SizedBox(height: 16),
-            Text(
-              t('Map columns'),
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            columnPicker('Date', date, (v) => date = v, count),
-            columnPicker(
-              'Description',
-              description,
-              (v) => description = v,
-              count,
-            ),
-            columnPicker('Amount', amount, (v) => amount = v, count),
-            columnPicker('Debit', debit, (v) => debit = v, count),
-            columnPicker('Credit', credit, (v) => credit = v, count),
-            columnPicker('Currency', currency, (v) => currency = v, count),
-            columnPicker('Category', category, (v) => category = v, count),
-            CheckboxListTile(
-              value: expense,
-              onChanged: (value) => setState(() {
-                expense = value ?? false;
-                drafts = null;
-              }),
-              title: Text(t('Unsigned amounts are expenses')),
-              subtitle: Text(
-                t(
-                  'Explicit plus and minus signs and debit/credit columns are preserved.',
+            if (data.format.startsWith('pdf:'))
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  '${t('Detected bank statement')}: ${t(data.format.substring(4))}',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-            ),
-            CheckboxListTile(
-              value: summary,
-              onChanged: (value) => setState(() {
-                summary = value ?? false;
-                drafts = null;
-              }),
-              title: Text(t('These are card payment summaries')),
-            ),
-            ExpansionTile(
-              title: Text(t('Source rows')),
-              children: [
-                for (final row in data.rows)
-                  ListTile(
-                    dense: true,
-                    title: Text(
-                      row
-                          .asMap()
-                          .entries
-                          .map((e) => '${e.key + 1}: ${e.value}')
-                          .join('  |  '),
-                    ),
+            if (!data.blocked) ...[
+              const SizedBox(height: 16),
+              Text(
+                t('Map columns'),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              columnPicker('Date', date, (v) => date = v, count),
+              columnPicker(
+                'Description',
+                description,
+                (v) => description = v,
+                count,
+              ),
+              columnPicker('Amount', amount, (v) => amount = v, count),
+              columnPicker('Debit', debit, (v) => debit = v, count),
+              columnPicker('Credit', credit, (v) => credit = v, count),
+              columnPicker('Currency', currency, (v) => currency = v, count),
+              columnPicker('Category', category, (v) => category = v, count),
+              CheckboxListTile(
+                value: expense,
+                onChanged: (value) => setState(() {
+                  expense = value ?? false;
+                  drafts = null;
+                }),
+                title: Text(t('Unsigned amounts are expenses')),
+                subtitle: Text(
+                  t(
+                    'Explicit plus and minus signs and debit/credit columns are preserved.',
                   ),
-              ],
-            ),
-            FilledButton.tonal(
-              onPressed: makeDrafts,
-              child: Text(t('Prepare review')),
-            ),
+                ),
+              ),
+              CheckboxListTile(
+                value: summary,
+                onChanged: (value) => setState(() {
+                  summary = value ?? false;
+                  drafts = null;
+                }),
+                title: Text(t('These are card payment summaries')),
+              ),
+              ExpansionTile(
+                title: Text(t('Source rows')),
+                children: [
+                  for (final row in data.rows)
+                    ListTile(
+                      dense: true,
+                      title: Text(
+                        row
+                            .asMap()
+                            .entries
+                            .map((e) => '${e.key + 1}: ${e.value}')
+                            .join('  |  '),
+                      ),
+                    ),
+                ],
+              ),
+              FilledButton.tonal(
+                onPressed: makeDrafts,
+                child: Text(t('Prepare review')),
+              ),
+            ],
           ],
           if (drafts != null) ...[
             const SizedBox(height: 20),
@@ -432,6 +487,14 @@ class _ImportScreenState extends State<ImportScreen> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
+            if (drafts!.any((row) => row['currencyInvalid'] == true))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  t('Correct invalid currencies before importing.'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
             Wrap(
               spacing: 8,
               children: [
@@ -440,6 +503,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     for (final row in drafts!) {
                       setDirection(row, true);
                     }
+                    refreshMatches();
                   }),
                   child: Text(t('Mark all as expenses')),
                 ),
@@ -448,6 +512,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     for (final row in drafts!) {
                       setDirection(row, false);
                     }
+                    refreshMatches();
                   }),
                   child: Text(t('Mark all as income')),
                 ),
@@ -478,7 +543,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     '${row['description']}  •  ${row['amount']} ${row['currency']}',
                   ),
                   subtitle: Text(
-                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${t(row['signUncertain'] == true
+                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
                         ? 'Choose income or expense'
                         : (row['amount'] as num) < 0
                         ? 'Expense'
@@ -495,8 +560,10 @@ class _ImportScreenState extends State<ImportScreen> {
                               ? Icons.help_outline
                               : Icons.swap_vert,
                         ),
-                        onSelected: (value) =>
-                            setState(() => setDirection(row, value)),
+                        onSelected: (value) => setState(() {
+                          setDirection(row, value);
+                          refreshMatches();
+                        }),
                         itemBuilder: (_) => [
                           PopupMenuItem(value: false, child: Text(t('Income'))),
                           PopupMenuItem(value: true, child: Text(t('Expense'))),
@@ -505,7 +572,10 @@ class _ImportScreenState extends State<ImportScreen> {
                       IconButton(
                         tooltip: t('Remove'),
                         icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => drafts!.remove(row)),
+                        onPressed: () => setState(() {
+                          drafts!.remove(row);
+                          refreshMatches();
+                        }),
                       ),
                     ],
                   ),
@@ -528,7 +598,10 @@ class _ImportScreenState extends State<ImportScreen> {
                   'status': 'actual',
                 };
                 if (await edit(row) && mounted) {
-                  setState(() => drafts!.add(row));
+                  setState(() {
+                    drafts!.add(row);
+                    refreshMatches();
+                  });
                 }
               },
               icon: const Icon(Icons.add),
@@ -536,13 +609,22 @@ class _ImportScreenState extends State<ImportScreen> {
             ),
             FilledButton(
               onPressed:
-                  drafts!.isEmpty ||
-                      drafts!.any((row) => row['signUncertain'] == true)
+                  loading ||
+                      drafts!.isEmpty ||
+                      drafts!.any(
+                        (row) =>
+                            row['signUncertain'] == true ||
+                            row['currencyInvalid'] == true,
+                      )
                   ? null
                   : () async {
                       setState(() => loading = true);
                       try {
-                        await widget.onSave(drafts!);
+                        await widget.onSave(
+                          drafts!
+                              .map((row) => Map<String, dynamic>.from(row))
+                              .toList(),
+                        );
                         if (context.mounted) Navigator.pop(context);
                       } catch (_) {
                         if (mounted) {

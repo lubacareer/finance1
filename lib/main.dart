@@ -12,6 +12,7 @@ import 'screens/forecast_screen.dart';
 import 'screens/import_screen.dart';
 import 'services/diary_controller.dart';
 import 'services/insights.dart';
+import 'services/import_service.dart' show parseStatementAmount;
 import 'services/ocr_service.dart';
 import 'services/vault.dart';
 import 'translations.dart';
@@ -20,18 +21,95 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting();
   await OcrService.cleanupStaleTemporaryFiles();
-  final vault = await Vault.openDefault();
-  runApp(
-    DiaryApp(
-      controller: DiaryController(vault),
-      hasVault: await vault.exists(),
-    ),
-  );
+  try {
+    final vault = await Vault.openDefault();
+    runApp(
+      DiaryApp(
+        controller: DiaryController(vault),
+        hasVault: await vault.exists(),
+      ),
+    );
+  } on VaultLocationConflict catch (conflict) {
+    runApp(VaultConflictApp(conflict: conflict));
+  }
 }
 
 const plum = Color(0xff26145f);
 const purple = Color(0xff8060d7);
 const pale = Color(0xfff1ebff);
+
+/// Never silently pick or overwrite one of two different existing diaries.
+class VaultConflictApp extends StatefulWidget {
+  const VaultConflictApp({super.key, required this.conflict});
+  final VaultLocationConflict conflict;
+  @override
+  State<VaultConflictApp> createState() => _VaultConflictAppState();
+}
+
+class _VaultConflictAppState extends State<VaultConflictApp> {
+  DiaryController? selected;
+  @override
+  Widget build(BuildContext context) {
+    final diary = selected;
+    if (diary != null) return DiaryApp(controller: diary, hasVault: true);
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      supportedLocales: const [Locale('en'), Locale('he'), Locale('ru')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      home: Builder(
+        builder: (context) {
+          String t(String value) =>
+              translate(Localizations.localeOf(context).languageCode, value);
+          return Scaffold(
+            body: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            t('Choose a diary'),
+                            style: Theme.of(context).textTheme.headlineSmall,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            t(
+                              'Two different encrypted diaries were found. Choose the one to open; neither file will be changed by this choice.',
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          for (final choice in [
+                            (t('Original diary'), widget.conflict.legacy),
+                            (t('Other diary'), widget.conflict.current),
+                          ])
+                            ListTile(
+                              title: Text(choice.$1),
+                              subtitle: SelectableText(choice.$2.path),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => setState(
+                                () => selected = DiaryController(
+                                  Vault(choice.$2),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
 
 class DiaryApp extends StatefulWidget {
   const DiaryApp({super.key, required this.controller, required this.hasVault});
@@ -406,7 +484,12 @@ class _HomeState extends State<Home> {
 
   Future<void> convertRates() async {
     try {
-      await c.convertMissingRates();
+      final skipped = await c.convertMissingRates();
+      if (skipped > 0) {
+        message(
+          '${t('Some transactions have invalid currency codes; correct them to convert.')}: $skipped',
+        );
+      }
     } catch (_) {
       message(t('Could not update rates.'));
     }
@@ -1413,8 +1496,18 @@ class _HomeState extends State<Home> {
               title: Text(t('Update missing ILS amounts')),
               onTap: () async {
                 message(t('Updating rates…'));
-                await c.convertMissingRates();
-                message(t('Rates updated.'));
+                try {
+                  final skipped = await c.convertMissingRates();
+                  if (skipped > 0) {
+                    message(
+                      '${t('Some transactions have invalid currency codes; correct them to convert.')}: $skipped',
+                    );
+                  } else {
+                    message(t('Rates updated.'));
+                  }
+                } catch (_) {
+                  message(t('Could not update rates.'));
+                }
               },
             ),
             ListTile(
@@ -1545,7 +1638,7 @@ class _HomeState extends State<Home> {
       ),
     );
     final code = currency.text.trim().toUpperCase(),
-        rate = double.tryParse(value.text);
+        rate = parseStatementAmount(value.text);
     currency.dispose();
     value.dispose();
     if (result == true &&

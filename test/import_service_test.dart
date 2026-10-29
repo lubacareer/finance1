@@ -47,6 +47,61 @@ void main() {
     expect(parseStatementDate('31/02/2026'), isNull);
   });
 
+  test('parses both decimal conventions and rejects malformed grouping', () {
+    for (final value in ['1 234,56', '1.234,56', '1,234.56']) {
+      expect(parseStatementAmount(value), 1234.56, reason: value);
+    }
+    expect(parseStatementAmount('12,50'), 12.5);
+    expect(parseStatementAmount('(1.234,56)'), -1234.56);
+    expect(parseStatementAmount('1,234'), 1234);
+    expect(parseStatementAmount('1.234'), isNull); // ambiguous
+    for (final value in ['1,23,456', '12.34.56', '1 23,45', '1,234.567']) {
+      expect(parseStatementAmount(value), isNull, reason: value);
+    }
+    final parsed = parsePdfStatementLine('01/10/2026 Shop 1.234,56-');
+    expect(parsed[1], 'Shop');
+    expect(parseStatementAmount(parsed[2]), -1234.56);
+    final parsedSpace = parsePdfStatementLine('01/10/2026 Shop 1 234,56');
+    expect(parseStatementAmount(parsedSpace[2]), 1234.56);
+  });
+
+  test('mapped currencies require review and unmapped defaults to ILS', () {
+    final preview = ImportPreview(
+      format: 'csv',
+      warnings: [],
+      rows: [
+        ['2026-01-01', 'A', '10.00', '₪'],
+        ['2026-01-02', 'B', '20.00', 'US DOLLARS'],
+        ['2026-01-03', 'C', '30.00', ''],
+        ['2026-01-04', 'D', '40.00', 'not-a-currency'],
+      ],
+    );
+    const mapping = ColumnMapping(
+      date: 0,
+      description: 1,
+      amount: 2,
+      currency: 3,
+    );
+    final rows = preview.candidates(accountId: 'a', mapping: mapping);
+    expect(rows.map((e) => e['currency']), [
+      'ILS',
+      'USD',
+      '',
+      'not-a-currency',
+    ]);
+    expect(rows.map((e) => e['currencyInvalid']), [false, false, true, true]);
+    final unmapped = preview.candidates(
+      accountId: 'a',
+      mapping: const ColumnMapping(date: 0, description: 1, amount: 2),
+    );
+    expect(
+      unmapped.every(
+        (e) => e['currency'] == 'ILS' && e['currencyInvalid'] == false,
+      ),
+      isTrue,
+    );
+  });
+
   test('separate debit and credit columns override card expense defaults', () {
     final preview = ImportPreview(
       format: 'csv',

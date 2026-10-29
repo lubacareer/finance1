@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'currency.dart';
 import 'insights.dart';
 import 'vault.dart';
 
@@ -130,7 +131,18 @@ class DiaryController extends ChangeNotifier {
 
   Future<void> putEntry(Map<String, dynamic> entry) async {
     _assertEditable();
+    _extendRecurring();
     final list = entries;
+    final old = list.where((e) => e['id'] == entry['id']).firstOrNull;
+    // An explicit user edit of a generated occurrence makes it an override.
+    if (old?['recurringSourceId'] != null) {
+      entry = {
+        ...entry,
+        'recurringSourceId': old!['recurringSourceId'],
+        'recurringOffset': old['recurringOffset'],
+        'recurringOverridden': true,
+      };
+    }
     list.removeWhere((e) => e['id'] == entry['id']);
     list.add(entry);
     _data['entries'] = list;
@@ -138,9 +150,8 @@ class DiaryController extends ChangeNotifier {
     await _save();
   }
 
-  /// Extend recurring plans through the next three months, preserving any
-  /// occurrence the user already edited. IDs are anchored to the source entry
-  /// and month offset so reopening the app never creates duplicates.
+  /// Reconcile future generated entries. Legacy children have no edit marker,
+  /// so they are conservatively treated as user overrides.
   bool _extendRecurring({DateTime? today}) {
     final now = today ?? DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
@@ -156,13 +167,32 @@ class DiaryController extends ChangeNotifier {
       now.day > horizonDay ? horizonDay : now.day,
     );
     final list = entries;
-    final ids = {
-      ...list.map((e) => '${e['id']}'),
-      ...((_data['deletedRecurringIds'] as List?) ?? []).map((id) => '$id'),
+    final sources = {
+      for (final e in list.where((e) => e['repeatMonthly'] == true))
+        '${e['id']}': e,
     };
-    final sources = list.where((e) => e['repeatMonthly'] == true).toList();
+    final tombstones = ((_data['deletedRecurringIds'] as List?) ?? [])
+        .map((id) => '$id')
+        .toSet();
     var changed = false;
-    for (final source in sources) {
+    // Old versions generated "source:offset" rows without provenance; they
+    // might have been edited, so adopt them only as overrides, never overwrite.
+    for (final row in list) {
+      if (row['recurringSourceId'] != null) continue;
+      for (final sourceId in sources.keys) {
+        final id = '${row['id']}';
+        if (!id.startsWith('$sourceId:')) continue;
+        final offset = int.tryParse(id.substring(sourceId.length + 1));
+        if (offset == null || offset < 1) continue;
+        row['recurringSourceId'] = sourceId;
+        row['recurringOffset'] = offset;
+        row['recurringOverridden'] = true;
+        changed = true;
+        break;
+      }
+    }
+    final expected = <String, Map<String, dynamic>>{};
+    for (final source in sources.values) {
       final date = DateTime.tryParse('${source['date']}');
       if (date == null || source['id'] == null) continue;
       final firstOffset =
@@ -178,15 +208,65 @@ class DiaryController extends ChangeNotifier {
         );
         if (next.isBefore(start) || next.isAfter(end)) continue;
         final id = '${source['id']}:$i';
-        if (!ids.add(id)) continue;
-        list.add({
+        if (tombstones.contains(id)) continue;
+        expected[id] = {
           ...source,
           'id': id,
           'date': next.toIso8601String().substring(0, 10),
           'status': 'planned',
           'repeatMonthly': false,
           'linkedIds': <String>[],
-        });
+          'recurringSourceId': '${source['id']}',
+          'recurringOffset': i,
+          'recurringOverridden': false,
+        };
+      }
+    }
+    final removed = <String>{};
+    final existingIds = <String>{};
+    for (final row in list) {
+      final id = '${row['id']}';
+      existingIds.add(id);
+      final sourceId = row['recurringSourceId'];
+      if (sourceId == null) continue;
+      final currentDate = DateTime.tryParse('${row['date']}');
+      final isFuture = currentDate != null && !currentDate.isBefore(start);
+      final active = sources.containsKey('$sourceId');
+      if (!active && (row['recurringOverridden'] == true || !isFuture)) {
+        row.remove('recurringSourceId');
+        row.remove('recurringOffset');
+        row.remove('recurringOverridden');
+        changed = true;
+      } else if (row['recurringOverridden'] != true && isFuture) {
+        final target = expected[id];
+        if (target == null) {
+          removed.add(id);
+          changed = true;
+        } else {
+          final replacement = {
+            ...target,
+            'linkedIds': row['linkedIds'] ?? <String>[],
+          };
+          if (!mapEquals(row, replacement)) {
+            row
+              ..clear()
+              ..addAll(replacement);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (removed.isNotEmpty) {
+      list.removeWhere((row) => removed.contains('${row['id']}'));
+      for (final row in list) {
+        row['linkedIds'] = (row['linkedIds'] as List? ?? [])
+            .where((id) => !removed.contains('$id'))
+            .toList();
+      }
+    }
+    for (final entry in expected.entries) {
+      if (existingIds.add(entry.key)) {
+        list.add(entry.value);
         changed = true;
       }
     }
@@ -202,6 +282,7 @@ class DiaryController extends ChangeNotifier {
       if (ids.add(row['id'])) list.add(row);
     }
     _data['entries'] = list;
+    _extendRecurring();
     await _save();
   }
 
@@ -213,6 +294,7 @@ class DiaryController extends ChangeNotifier {
   Future<void> deleteEntries(Set<String> ids) async {
     _assertEditable();
     if (ids.isEmpty) return;
+    _extendRecurring();
     final list = entries;
     final recurringSources = list
         .where((e) => e['repeatMonthly'] == true)
@@ -232,6 +314,7 @@ class DiaryController extends ChangeNotifier {
           .toList();
     }
     _data['entries'] = list;
+    _extendRecurring();
     await _save();
   }
 
@@ -242,6 +325,9 @@ class DiaryController extends ChangeNotifier {
     final list = entries;
     for (final entry in list) {
       if (!ids.contains('${entry['id']}')) continue;
+      if (entry['recurringSourceId'] != null) {
+        entry['recurringOverridden'] = true;
+      }
       for (final key in ['amount', 'amountIls']) {
         final value = entry[key];
         if (value is num) entry[key] = isExpense ? -value.abs() : value.abs();
@@ -249,12 +335,14 @@ class DiaryController extends ChangeNotifier {
       entry['signUncertain'] = false;
     }
     _data['entries'] = list;
+    _extendRecurring();
     await _save();
   }
 
   /// Delete an account and its entries together; unrelated accounts remain intact.
   Future<void> deleteAccount(String id) async {
     _assertEditable();
+    _extendRecurring();
     final list = entries;
     final removed = list
         .where((e) => e['accountId'] == id)
@@ -268,6 +356,7 @@ class DiaryController extends ChangeNotifier {
     }
     _data['entries'] = list;
     _data['accounts'] = accounts..removeWhere((a) => a['id'] == id);
+    _extendRecurring();
     await _save();
   }
 
@@ -312,19 +401,26 @@ class DiaryController extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> convertMissingRates() async {
+  /// Returns the number of legacy rows skipped because their currency is invalid.
+  Future<int> convertMissingRates() async {
     _assertEditable();
     final generation = _generation;
     final sourceRows = entries;
     final service = ExchangeRates(rates);
     final converted = <String, Map<String, dynamic>>{};
+    var invalidCurrencies = 0;
     for (final row in sourceRows) {
       if (row['amountIls'] != null || row['amount'] is! num) continue;
       final date = DateTime.tryParse('${row['date']}');
       if (date == null) continue;
-      final rate = await service.rate('${row['currency'] ?? 'ILS'}', date);
+      final currency = normalizeCurrency('${row['currency'] ?? 'ILS'}');
+      if (currency == null) {
+        invalidCurrencies++;
+        continue;
+      }
+      final rate = await service.rate(currency, date);
       if (generation != _generation || !vault.isUnlocked || _transitioning) {
-        return;
+        return invalidCurrencies;
       }
       if (rate != null) {
         converted['${row['id']}'] = {'original': row, 'rate': rate};
@@ -349,6 +445,7 @@ class DiaryController extends ChangeNotifier {
     }
     _data['entries'] = list;
     await _save();
+    return invalidCurrencies;
   }
 
   Future<void> addManualRate(
@@ -378,6 +475,7 @@ class DiaryController extends ChangeNotifier {
       throw StateError('The diary is changing state.');
     }
     _generation++;
+    final restoreGeneration = _generation;
     _transitioning = true;
     try {
       final operation = _pending.then((_) async {
@@ -385,13 +483,24 @@ class DiaryController extends ChangeNotifier {
           throw StateError('Cannot restore while there are unsaved changes.');
         }
         _data = await vault.restoreBytes(bytes, passcode);
+        if (_extendRecurring()) {
+          try {
+            await vault.save(_deepCopy(_data));
+            lastSaveError = null;
+          } on Object catch (error) {
+            lastSaveError = error;
+            rethrow;
+          }
+        }
       });
       _pending = operation.catchError((Object _) {});
-      await operation;
-      notifyListeners();
+      try {
+        await operation;
+      } finally {
+        notifyListeners();
+      }
     } finally {
-      _transitioning = false;
+      if (restoreGeneration == _generation) _transitioning = false;
     }
-    if (_extendRecurring()) await _save();
   }
 }

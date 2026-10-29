@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' as digest;
 import 'package:cryptography/cryptography.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path_provider_windows/path_provider_windows.dart';
 
 /// A self-contained encrypted diary. Backup files have exactly the same format
 /// and can therefore be moved between desktop and mobile without a server.
@@ -26,7 +28,58 @@ class Vault {
 
   static Future<Vault> openDefault() async {
     final directory = await getApplicationSupportDirectory();
+    if (Platform.isWindows) {
+      final roamingPath = await _windowsRoamingAppData();
+      if (roamingPath == null || roamingPath.isEmpty) {
+        throw StateError(
+          'Cannot find the Windows roaming application data folder.',
+        );
+      }
+      return selectWindowsLocation(
+        roamingDirectory: Directory(roamingPath),
+        currentDirectory: directory,
+      );
+    }
     return Vault(File('${directory.path}${Platform.pathSeparator}diary.vault'));
+  }
+
+  // FOLDERID_RoamingAppData. The package's non-FFI analyzer stub does not
+  // expose WindowsKnownFolder constants, although the runtime implementation
+  // accepts the same documented GUID on Windows.
+  static Future<String?> _windowsRoamingAppData() =>
+      PathProviderWindows().getPath('{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}');
+
+  /// Keep the pre-rebrand Windows location stable across product metadata
+  /// changes. A diary created at the newer location is also recognized.
+  /// Conflicting diaries are never overwritten or chosen silently.
+  static Future<Vault> selectWindowsLocation({
+    required Directory roamingDirectory,
+    required Directory currentDirectory,
+  }) async {
+    final separator = Platform.pathSeparator;
+    final legacy = File(
+      '${roamingDirectory.path}${separator}com.example${separator}finance_diary${separator}diary.vault',
+    );
+    final current = File('${currentDirectory.path}${separator}diary.vault');
+    if (legacy.absolute.path.toLowerCase() ==
+        current.absolute.path.toLowerCase()) {
+      return Vault(legacy);
+    }
+    final oldExists = await legacy.exists();
+    final currentExists = await current.exists();
+    if (oldExists && currentExists) {
+      final oldHash = await digest.sha256.bind(legacy.openRead()).first;
+      final currentHash = await digest.sha256.bind(current.openRead()).first;
+      final equal =
+          oldHash.bytes.length == currentHash.bytes.length &&
+          List.generate(
+            oldHash.bytes.length,
+            (i) => i,
+          ).every((i) => oldHash.bytes[i] == currentHash.bytes[i]);
+      if (!equal) throw VaultLocationConflict(legacy: legacy, current: current);
+    }
+    if (oldExists || !currentExists) return Vault(legacy);
+    return Vault(current);
   }
 
   Future<bool> exists() => file.exists();
@@ -198,6 +251,15 @@ class VaultException implements Exception {
 
   @override
   String toString() => 'Incorrect passcode or damaged diary.';
+}
+
+/// Two distinct Windows diaries exist; the UI must ask the user which to open.
+class VaultLocationConflict implements Exception {
+  const VaultLocationConflict({required this.legacy, required this.current});
+  final File legacy;
+  final File current;
+  @override
+  String toString() => 'Two different local diaries were found.';
 }
 
 class _OpenedVault {

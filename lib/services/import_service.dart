@@ -7,6 +7,8 @@ import 'package:html/parser.dart' as html;
 import 'package:pdfrx/pdfrx.dart';
 
 import 'ocr_service.dart';
+import 'currency.dart';
+import 'bank_pdf_parser.dart';
 
 /// Column positions in the preview table. The user must confirm these and the
 /// resulting rows; statement layouts and debit/credit conventions vary.
@@ -37,9 +39,11 @@ class ImportPreview {
     required this.format,
     required this.rows,
     required this.warnings,
+    this.blocked = false,
   });
 
   final String format;
+  final bool blocked;
 
   /// Rows are intentionally retained for review and mapping before import.
   final List<List<String>> rows;
@@ -96,6 +100,7 @@ class ImportPreview {
     ColumnMapping? mapping,
     bool amountIsExpense = false,
   }) {
+    if (blocked) return [];
     final selected = mapping ?? suggestMapping();
     if (selected == null) return [];
     String cell(List<String> row, int? index) =>
@@ -124,14 +129,10 @@ class ImportPreview {
           amount == 0) {
         continue;
       }
-      var currency = cell(row, selected.currency).toUpperCase();
-      if (currency.isEmpty ||
-          currency == '₪' ||
-          currency == 'שח' ||
-          currency == 'ש"ח' ||
-          currency == 'NIS') {
-        currency = 'ILS';
-      }
+      final rawCurrency = cell(row, selected.currency);
+      final currency = selected.currency == null
+          ? 'ILS'
+          : normalizeCurrency(rawCurrency);
       final isFuture = date.isAfter(DateTime.now());
       result.add({
         'id': '',
@@ -149,7 +150,8 @@ class ImportPreview {
             !_hasExplicitAmountSign(amountText) &&
             !selected.cardSummary &&
             !amountIsExpense,
-        'currency': currency,
+        'currency': currency ?? rawCurrency,
+        'currencyInvalid': currency == null,
         'amountIls': currency == 'ILS' ? amount : null,
         'kind': selected.cardSummary ? 'card_summary' : 'transaction',
         'linkedIds': <String>[],
@@ -188,24 +190,66 @@ DateTime? parseStatementDate(String value) {
 double? parseStatementAmount(String value) {
   var s = value
       .trim()
-      .replaceAll(RegExp(r'[\u200e\u200f\u202a-\u202e\s₪]'), '')
+      .replaceAll(RegExp(r'[\u200e\u200f\u202a-\u202e₪]'), '')
       .replaceAll('−', '-');
+  s = s.trim();
   if (s.isEmpty) return null;
   var negative = false;
   if (s.startsWith('(') && s.endsWith(')')) {
     negative = true;
-    s = s.substring(1, s.length - 1);
+    s = s.substring(1, s.length - 1).trim();
   }
   if (s.endsWith('-')) {
     negative = true;
-    s = s.substring(0, s.length - 1);
+    s = s.substring(0, s.length - 1).trim();
   } else if (s.endsWith('+')) {
-    s = s.substring(0, s.length - 1);
+    s = s.substring(0, s.length - 1).trim();
   }
-  s = s.replaceAll(',', '');
-  if (!RegExp(r'^[-+]?\d+(?:\.\d+)?$').hasMatch(s)) return null;
-  final number = double.tryParse(s);
-  return number == null ? null : (negative ? -number.abs() : number);
+  if (s.startsWith('-') || s.startsWith('+')) {
+    if (negative) return null;
+    negative = s.startsWith('-');
+    s = s.substring(1).trim();
+  }
+  if (s.contains(RegExp(r'\s'))) {
+    if (!RegExp(r'^\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?$').hasMatch(s)) {
+      return null;
+    }
+    s = s.replaceAll(RegExp(r'\s'), '');
+  }
+  if (!RegExp(r'^[0-9.,]+$').hasMatch(s)) return null;
+  final comma = s.lastIndexOf(','), dot = s.lastIndexOf('.');
+  final last = comma > dot ? comma : dot;
+  String integer = s, fraction = '';
+  if (last >= 0 && s.length - last - 1 <= 2) {
+    if (last == s.length - 1) return null;
+    integer = s.substring(0, last);
+    fraction = s.substring(last + 1);
+    final decimal = s[last];
+    if (integer.contains(decimal)) return null;
+  } else if (dot >= 0 && comma < 0) {
+    // A lone period followed by three digits could be a decimal or grouping.
+    return null;
+  }
+  if (integer.contains(',') && integer.contains('.')) return null;
+  final separator = integer.contains(',')
+      ? ','
+      : integer.contains('.')
+      ? '.'
+      : '';
+  if (separator.isNotEmpty) {
+    final groups = integer.split(separator);
+    if (!RegExp(r'^\d{1,3}$').hasMatch(groups.first) ||
+        groups.skip(1).any((g) => !RegExp(r'^\d{3}$').hasMatch(g))) {
+      return null;
+    }
+    integer = groups.join();
+  }
+  if (!RegExp(r'^\d+$').hasMatch(integer)) return null;
+  final number = double.tryParse(
+    '$integer${fraction.isEmpty ? '' : '.$fraction'}',
+  );
+  if (number == null || !number.isFinite) return null;
+  return negative ? -number : number;
 }
 
 bool _hasExplicitAmountSign(String value) {
@@ -234,9 +278,11 @@ List<String> parsePdfStatementLine(String line) {
       ? trimmed.replaceFirst(dates.single.group(0)!, '')
       : trimmed;
   final amounts = RegExp(
-    r'(?:\(\s*₪?\s*[+\-−]?\s*\d[\d,]*\.\d{2}\s*₪?\s*\)|₪?\s*[+\-−]?\s*\d[\d,]*\.\d{2}\s*₪?\s*[+\-−]?)',
+    r'(?<![\d.,])(?:\(\s*₪?\s*[+\-−]?\s*\d[\d.,\u00a0 ]*[.,]\d{1,2}\s*₪?\s*\)|₪?\s*[+\-−]?\s*\d[\d.,\u00a0 ]*[.,]\d{1,2}\s*₪?\s*[+\-−]?)(?![\d.,])',
   ).allMatches(remainder).toList();
-  if (dates.length == 1 && amounts.length == 1) {
+  if (dates.length == 1 &&
+      amounts.length == 1 &&
+      parseStatementAmount(amounts.single.group(0)!) != null) {
     final amount = amounts.single.group(0)!.trim();
     final description = remainder
         .replaceFirst(amounts.single.group(0)!, '')
@@ -346,11 +392,52 @@ class ImportService {
       'PDF extraction is incomplete and can lose columns, signs or text. Cross-check every page against the original and add missing transactions manually.',
     ];
     try {
+      final pages = <BankPdfPage>[];
       for (final page in document.pages) {
-        var text = (await page.loadText())?.fullText ?? '';
+        final raw = await page.loadText();
+        pages.add(
+          BankPdfPage(
+            text: raw?.fullText ?? '',
+            rects: raw?.charRects ?? [],
+            width: page.width,
+            height: page.height,
+          ),
+        );
+      }
+      final bank = parseBankDocument(pages);
+      if (bank != null) {
+        if (bank.mixedProviders) {
+          return ImportPreview(
+            format: 'pdf',
+            rows: const [],
+            blocked: true,
+            warnings: const [
+              'This PDF contains multiple bank statement formats. Import each bank separately.',
+            ],
+          );
+        }
+        if (bank.incompleteCount > 0) {
+          warnings.add(
+            'Some bank statement rows or pages could not be read. Compare every page and add missing transactions manually.',
+          );
+        }
+        return ImportPreview(
+          format: 'pdf:${bank.provider}',
+          rows: bank.rows,
+          warnings: warnings,
+        );
+      }
+      for (var pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
+        final page = document.pages[pageIndex];
+        var text = pages[pageIndex].text;
         if (text.trim().isEmpty) {
           try {
             text = (await OcrService().recognize(page)) ?? '';
+          } on OcrUnavailableException {
+            const message =
+                'Offline OCR is unavailable or failed its integrity check; add missing transactions manually.';
+            if (!warnings.contains(message)) warnings.add(message);
+            text = '';
           } catch (_) {
             text = '';
           }

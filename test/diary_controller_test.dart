@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:finance_diary/services/diary_controller.dart';
@@ -26,6 +27,21 @@ class FailingVault extends Vault {
   @override
   Future<void> save(Map<String, dynamic> data) async {
     if (failWrites) throw const FileSystemException('Synthetic write failure');
+    await super.save(data);
+  }
+}
+
+class GatedVault extends Vault {
+  GatedVault(super.file);
+  final started = Completer<void>();
+  final release = Completer<void>();
+  bool gateSaves = false;
+  @override
+  Future<void> save(Map<String, dynamic> data) async {
+    if (gateSaves) {
+      if (!started.isCompleted) started.complete();
+      await release.future;
+    }
     await super.save(data);
   }
 }
@@ -179,6 +195,193 @@ void main() {
     expect(newDevice.entries.single['id'], 'one');
     newDevice.dispose();
   });
+
+  test(
+    'restore persists generated occurrences before a concurrent lock',
+    () async {
+      final now = DateTime.now();
+      final sourceDate = DateTime(
+        now.year,
+        now.month - 1,
+        1,
+      ).toIso8601String().substring(0, 10);
+      final backupVault = Vault(File('${temp.path}/source.vault'));
+      await backupVault.create('synthetic-passphrase', {
+        'version': 1,
+        'accounts': [
+          {'id': 'a', 'name': 'Synthetic', 'type': 'bank'},
+        ],
+        'entries': [
+          {
+            ...entry('source', 'a', 'transaction'),
+            'date': sourceDate,
+            'repeatMonthly': true,
+          },
+        ],
+      });
+      final backup = await backupVault.exportBytes();
+      final gatedVault = GatedVault(File('${temp.path}/target.vault'))
+        ..gateSaves = true;
+      final target = DiaryController(gatedVault);
+      final restoring = target.restore(backup, 'synthetic-passphrase');
+      await gatedVault.started.future;
+      final locking = target.lock();
+      gatedVault.release.complete();
+      await Future.wait([restoring, locking]);
+      expect(target.lastSaveError, isNull);
+      expect(target.unlocked, isFalse);
+      await target.unlock('synthetic-passphrase');
+      expect(
+        target.entries.where((e) => e['recurringSourceId'] == 'source'),
+        isNotEmpty,
+      );
+      target.dispose();
+      backupVault.lock();
+    },
+  );
+
+  test(
+    'reconciles future generated occurrences while preserving edits',
+    () async {
+      final now = DateTime.now();
+      final sourceDate = DateTime(now.year, now.month - 1, 1);
+      await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
+      final source = {
+        ...entry('source', 'a', 'transaction'),
+        'date': sourceDate.toIso8601String().substring(0, 10),
+        'repeatMonthly': true,
+      };
+      await diary.putEntry(source);
+      final children = diary.entries
+          .where((e) => e['recurringSourceId'] == 'source')
+          .toList();
+      expect(children.length, greaterThanOrEqualTo(2));
+      final overridden = children.first;
+      final unedited = children.last;
+      await diary.putEntry({...overridden, 'description': 'User edit'});
+      await diary.putEntry({
+        ...source,
+        'amount': -55.0,
+        'amountIls': -55.0,
+        'date': DateTime(
+          sourceDate.year,
+          sourceDate.month,
+          2,
+        ).toIso8601String().substring(0, 10),
+      });
+      expect(
+        diary.entries.firstWhere(
+          (e) => e['id'] == overridden['id'],
+        )['description'],
+        'User edit',
+      );
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == unedited['id'])['amount'],
+        -55.0,
+      );
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == unedited['id'])['date'],
+        endsWith('-02'),
+      );
+      await diary.putEntry({...source, 'repeatMonthly': false});
+      expect(diary.entries.any((e) => e['id'] == unedited['id']), isFalse);
+      expect(
+        diary.entries.firstWhere(
+          (e) => e['id'] == overridden['id'],
+        )['description'],
+        'User edit',
+      );
+      await diary.deleteEntry('source');
+      expect(diary.entries.any((e) => e['id'] == overridden['id']), isTrue);
+    },
+  );
+
+  test('legacy recurring children are preserved as overrides', () async {
+    final now = DateTime.now();
+    final date = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).toIso8601String().substring(0, 10);
+    final legacyVault = Vault(File('${temp.path}/legacy.vault'));
+    await legacyVault.create('synthetic-passphrase', {
+      'version': 1,
+      'accounts': [
+        {'id': 'a', 'name': 'Synthetic', 'type': 'bank'},
+      ],
+      'entries': [
+        {
+          ...entry('legacy', 'a', 'transaction'),
+          'date': date,
+          'repeatMonthly': true,
+        },
+        {
+          ...entry('legacy:1', 'a', 'transaction'),
+          'date': DateTime(
+            now.year,
+            now.month + 1,
+            now.day,
+          ).toIso8601String().substring(0, 10),
+          'description': 'Possibly edited',
+        },
+      ],
+    });
+    final legacy = DiaryController(legacyVault);
+    await legacy.unlock('synthetic-passphrase');
+    expect(
+      legacy.entries.firstWhere(
+        (e) => e['id'] == 'legacy:1',
+      )['recurringOverridden'],
+      isTrue,
+    );
+    await legacy.deleteEntry('legacy');
+    expect(
+      legacy.entries.firstWhere((e) => e['id'] == 'legacy:1')['description'],
+      'Possibly edited',
+    );
+    legacy.dispose();
+    legacyVault.lock();
+  });
+
+  test(
+    'deleting a recurring source removes only unedited future children',
+    () async {
+      final now = DateTime.now();
+      final date = DateTime(
+        now.year,
+        now.month - 1,
+        1,
+      ).toIso8601String().substring(0, 10);
+      await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
+      await diary.putEntry({
+        ...entry('source-delete', 'a', 'transaction'),
+        'date': date,
+        'repeatMonthly': true,
+      });
+      final children = diary.entries
+          .where((e) => e['recurringSourceId'] == 'source-delete')
+          .toList();
+      expect(children.length, greaterThanOrEqualTo(2));
+      await diary.putEntry({
+        ...children.first,
+        'description': 'Keep user edit',
+      });
+      await diary.putEntry(entry('external', 'a', 'transaction'));
+      await diary.link('${children.last['id']}', 'external');
+      await diary.deleteEntry('source-delete');
+      expect(diary.entries.any((e) => e['id'] == children.last['id']), isFalse);
+      expect(
+        diary.entries.firstWhere(
+          (e) => e['id'] == children.first['id'],
+        )['description'],
+        'Keep user edit',
+      );
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == 'external')['linkedIds'],
+        isEmpty,
+      );
+    },
+  );
   test('conversion preserves concurrent edits and stops on lock', () async {
     await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
     await diary.addManualRate('USD', DateTime(2026, 10, 1), 4);
@@ -204,6 +407,32 @@ void main() {
     expect(diary.entries, isEmpty);
     await diary.unlock('synthetic-passphrase');
     expect(diary.entries.single['amount'], -50.0);
+  });
+
+  test('invalid legacy currency does not stop valid conversion', () async {
+    await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
+    await diary.addManualRate('USD', DateTime(2026, 10, 1), 4);
+    await diary.importEntries([
+      {
+        ...entry('bad', 'a', 'transaction'),
+        'currency': 'not a currency',
+        'amountIls': null,
+      },
+      {
+        ...entry('valid', 'a', 'transaction'),
+        'currency': 'USD',
+        'amountIls': null,
+      },
+    ]);
+    expect(await diary.convertMissingRates(), 1);
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == 'bad')['amountIls'],
+      isNull,
+    );
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == 'valid')['amountIls'],
+      -168.0,
+    );
   });
 
   test('reports failed saves until a later write succeeds', () async {

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../services/currency.dart';
+import '../services/import_service.dart';
+
 typedef Translate = String Function(String);
 
 String _identity(String value) => value;
 String _id() => DateTime.now().microsecondsSinceEpoch.toString();
 bool _validNumber(String? value) {
-  final number = double.tryParse(value?.trim() ?? '');
+  final number = parseStatementAmount(value ?? '');
   return number != null && number.isFinite;
 }
 
@@ -130,7 +133,7 @@ class _AccountEditorState extends State<_AccountEditor> {
               'id': widget.existing?['id'] ?? _id(),
               'name': _name.text.trim(),
               'type': _type,
-              'balance': double.tryParse(_balance.text.trim()),
+              'balance': parseStatementAmount(_balance.text),
             });
           },
           child: Text(t('Save')),
@@ -166,6 +169,7 @@ class _EntryEditorState extends State<_EntryEditor> {
   late String _direction;
   late DateTime _date;
   late bool _repeatMonthly;
+  bool _convertedEdited = false;
 
   @override
   void initState() {
@@ -309,13 +313,13 @@ class _EntryEditorState extends State<_EntryEditor> {
                   controller: _currency,
                   textCapitalization: TextCapitalization.characters,
                   decoration: InputDecoration(labelText: t('Currency code')),
-                  validator: (v) =>
-                      RegExp(r'^[A-Za-z]{3}$').hasMatch(v?.trim() ?? '')
+                  validator: (v) => normalizeCurrency(v ?? '') != null
                       ? null
                       : t('Enter a 3-letter currency code'),
                 ),
                 TextFormField(
                   controller: _amountIls,
+                  onChanged: (_) => _convertedEdited = true,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                     signed: true,
@@ -381,17 +385,32 @@ class _EntryEditorState extends State<_EntryEditor> {
         FilledButton(
           onPressed: () {
             if (!_form.currentState!.validate()) return;
-            final magnitude = double.parse(_amount.text.trim()).abs();
+            final magnitude = parseStatementAmount(_amount.text)!.abs();
             final amount = _direction == 'expense' ? -magnitude : magnitude;
-            final currency = _currency.text.trim().toUpperCase();
-            final convertedMagnitude = double.tryParse(_amountIls.text.trim())
+            final currency = normalizeCurrency(_currency.text)!;
+            final convertedMagnitude = parseStatementAmount(_amountIls.text)
                 ?.abs();
-            final convertedAmount = convertedMagnitude == null
+            var convertedAmount = convertedMagnitude == null
                 ? null
                 : (_direction == 'expense'
                       ? -convertedMagnitude
                       : convertedMagnitude);
-            Navigator.pop(context, <String, dynamic>{
+            final existing = widget.existing;
+            final previousAmount = (existing?['amount'] as num?)?.abs();
+            final previousCurrency = normalizeCurrency(
+              '${existing?['currency'] ?? 'ILS'}',
+            );
+            final previousDate = DateTime.tryParse(
+              '${existing?['date'] ?? ''}',
+            );
+            final sourceChanged =
+                existing != null &&
+                (previousAmount != magnitude ||
+                    previousCurrency != currency ||
+                    previousDate == null ||
+                    _dateString(previousDate) != _dateString(_date));
+            if (sourceChanged && !_convertedEdited) convertedAmount = null;
+            final updated = <String, dynamic>{
               ...?widget.existing,
               'id': widget.existing?['id'] ?? _id(),
               'accountId': _account,
@@ -407,7 +426,12 @@ class _EntryEditorState extends State<_EntryEditor> {
               'status': _status,
               'repeatMonthly': _repeatMonthly,
               'linkedIds': widget.existing?['linkedIds'] ?? <String>[],
-            });
+            };
+            if (sourceChanged || _convertedEdited || currency == 'ILS') {
+              updated.remove('rateDate');
+              updated.remove('rateSource');
+            }
+            Navigator.pop(context, updated);
           },
           child: Text(t('Save')),
         ),

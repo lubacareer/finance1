@@ -24,6 +24,42 @@ Map<String, dynamic> row(
 };
 
 void main() {
+  test('import matching excludes pairs without a draft', () {
+    final rows = [
+      {
+        'id': 'old-a',
+        'accountId': 'a',
+        'date': '2026-01-01',
+        'description': 'A',
+        'amount': -3.0,
+        'currency': 'ILS',
+      },
+      {
+        'id': 'old-b',
+        'accountId': 'a',
+        'date': '2026-01-01',
+        'description': 'A',
+        'amount': -3.0,
+        'currency': 'ILS',
+      },
+      {
+        'id': 'draft',
+        'accountId': 'a',
+        'date': '2026-01-01',
+        'description': 'A',
+        'amount': -3.0,
+        'currency': 'ILS',
+      },
+    ];
+    final matches = Insights.matchCandidates(rows, involvingIds: {'draft'});
+    expect(matches, hasLength(2));
+    expect(
+      matches.every(
+        (match) => match['firstId'] == 'draft' || match['secondId'] == 'draft',
+      ),
+      isTrue,
+    );
+  });
   test('forecasts monthly recurrence only after three months and ignores existing planned month', () {
     final history = [
       row('1', '2026-01-10', -100),

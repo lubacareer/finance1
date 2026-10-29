@@ -66,18 +66,28 @@ class Insights {
   static List<Map<String, dynamic>> matchCandidates(
     List<Map<String, dynamic>> rows, {
     List<Map<String, dynamic>> accounts = const [],
+    Set<String>? involvingIds,
   }) {
     final result = <Map<String, dynamic>>[];
     final types = {
       for (final account in accounts) '${account['id']}': account['type'],
     };
-    for (var i = 0; i < rows.length; i++) {
-      final a = rows[i];
+    final candidates = involvingIds == null
+        ? rows
+        : [
+            ...rows.where((r) => involvingIds.contains('${r['id']}')),
+            ...rows.where((r) => !involvingIds.contains('${r['id']}')),
+          ];
+    final outerCount = involvingIds == null
+        ? candidates.length
+        : candidates.where((r) => involvingIds.contains('${r['id']}')).length;
+    for (var i = 0; i < outerCount; i++) {
+      final a = candidates[i];
       final ad = _date(a['date']);
       final aa = _ils(a);
       if (ad == null || aa == null) continue;
-      for (var j = i + 1; j < rows.length; j++) {
-        final b = rows[j];
+      for (var j = i + 1; j < candidates.length; j++) {
+        final b = candidates[j];
         if (((a['linkedIds'] as List?)?.contains(b['id']) ?? false) ||
             ((b['linkedIds'] as List?)?.contains(a['id']) ?? false)) {
           continue;
@@ -129,6 +139,11 @@ class Insights {
             date.difference(purchaseDate).inDays <= 45;
       }).toList();
       if (purchases.isEmpty) continue;
+      if (involvingIds != null &&
+          !involvingIds.contains('${summary['id']}') &&
+          !purchases.any((r) => involvingIds.contains('${r['id']}'))) {
+        continue;
+      }
       final total = purchases.fold<double>(0, (sum, r) => sum + _ils(r)!);
       if ((total - amount).abs() > 0.01 || !countsAsSpending(summary, rows)) {
         continue;

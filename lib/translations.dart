@@ -1,5 +1,22 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Choose a diary': 'בחירת יומן',
+    'Two different encrypted diaries were found. Choose the one to open; neither file will be changed by this choice.': 'נמצאו שני יומנים מוצפנים שונים. בחרו איזה מהם לפתוח; בחירה זו אינה משנה אף אחד מהקבצים.',
+    'Original diary': 'היומן המקורי',
+    'Other diary': 'היומן האחר',
+    'Detected bank statement': 'זוהה דוח בנק',
+    'Leumi': 'לאומי',
+    'Beinleumi': 'הבינלאומי',
+    'This PDF contains multiple bank statement formats. Import each bank separately.':
+        'קובץ ה-PDF מכיל דוחות של כמה בנקים. יש לייבא כל בנק בנפרד.',
+    'Some bank statement rows or pages could not be read. Compare every page and add missing transactions manually.': 'חלק מהשורות או מהעמודים לא נקראו. יש לבדוק כל עמוד ולהוסיף תנועות חסרות ידנית.',
+    'Some transactions have invalid currency codes; correct them to convert.':
+        'בחלק מהתנועות קודי מטבע לא תקינים; יש לתקן אותם כדי להמיר.',
+    'Enter a valid currency code.': 'יש להזין קוד מטבע תקין.',
+    'Invalid currency': 'מטבע לא תקין',
+    'Correct invalid currencies before importing.':
+        'יש לתקן מטבעות לא תקינים לפני הייבוא.',
+    'Offline OCR is unavailable or failed its integrity check; add missing transactions manually.': 'זיהוי הטקסט אינו זמין או שבדיקת התקינות שלו נכשלה; יש להוסיף תנועות חסרות באופן ידני.',
     'Unsigned amounts are expenses': 'סכומים ללא סימן הם הוצאות',
     'Explicit plus and minus signs and debit/credit columns are preserved.':
         'סימני פלוס ומינוס מפורשים ועמודות חובה וזכות נשמרים.',
@@ -204,6 +221,22 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Choose a diary': 'Выберите дневник',
+    'Two different encrypted diaries were found. Choose the one to open; neither file will be changed by this choice.': 'Найдены два разных зашифрованных дневника. Выберите, какой открыть; ни один файл не будет изменён этим выбором.',
+    'Original diary': 'Исходный дневник',
+    'Other diary': 'Другой дневник',
+    'Detected bank statement': 'Распознанная банковская выписка',
+    'Leumi': 'Леуми',
+    'Beinleumi': 'Бейнлеуми',
+    'This PDF contains multiple bank statement formats. Import each bank separately.': 'PDF содержит выписки разных банков. Импортируйте каждый банк отдельно.',
+    'Some bank statement rows or pages could not be read. Compare every page and add missing transactions manually.': 'Некоторые строки или страницы выписки не распознаны. Проверьте каждую страницу и добавьте пропущенные операции вручную.',
+    'Some transactions have invalid currency codes; correct them to convert.':
+        'У некоторых операций неверные коды валют; исправьте их для пересчёта.',
+    'Enter a valid currency code.': 'Введите корректный код валюты.',
+    'Invalid currency': 'Некорректная валюта',
+    'Correct invalid currencies before importing.':
+        'Исправьте некорректные валюты перед импортом.',
+    'Offline OCR is unavailable or failed its integrity check; add missing transactions manually.': 'Офлайн-распознавание недоступно или не прошло проверку целостности; добавьте пропущенные операции вручную.',
     'Unsigned amounts are expenses': 'Суммы без знака — это расходы',
     'Explicit plus and minus signs and debit/credit columns are preserved.':
         'Явные знаки плюс и минус и столбцы дебета и кредита сохраняются.',

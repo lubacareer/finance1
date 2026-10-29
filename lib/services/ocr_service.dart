@@ -1,17 +1,34 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tesseract_ocr/flutter_tesseract_ocr.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import 'ocr_integrity.dart';
+
+export 'ocr_integrity.dart' show OcrUnavailableException;
+
 /// Local OCR for image-only PDF pages. No document content is sent to a server.
-/// Windows requires a Tesseract 4+ executable next to the app in `tesseract/`
-/// or on PATH. Android uses the bundled plugin and language models.
+/// Windows uses only the integrity-checked bundled engine. Android uses the
+/// bundled plugin and language models.
 class OcrService {
+  OcrService() : _windowsBundleRoot = null, _temporaryDirectory = null;
+
+  /// Allows exercising a complete synthetic bundle without altering an app install.
+  @visibleForTesting
+  OcrService.testWindowsBundle(Directory root, Directory temporaryDirectory)
+    : _windowsBundleRoot = root,
+      _temporaryDirectory = temporaryDirectory;
+
+  final Directory? _windowsBundleRoot;
+  final Directory? _temporaryDirectory;
+
+  Directory get _bundleRoot =>
+      _windowsBundleRoot ?? File(Platform.resolvedExecutable).parent;
+
   /// Clean up old OCR work directories left by a previous interrupted run.
   /// Only direct, non-symlink children with the app's prefix and expected
   /// contents are eligible. Recent directories may belong to another running
@@ -60,21 +77,14 @@ class OcrService {
   }
 
   Future<String?> _windowsExecutable() async {
-    final candidates = [
-      '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}tesseract${Platform.pathSeparator}tesseract.exe',
-      'tesseract',
-    ];
-    for (final candidate in candidates) {
-      try {
-        final result = await Process.run(candidate, [
-          '--version',
-        ]).timeout(const Duration(seconds: 5));
-        if (result.exitCode == 0) return candidate;
-      } on Exception {
-        // Try the next candidate. OCR remains optional if no engine is found.
-      }
-    }
-    return null;
+    final path =
+        '${_bundleRoot.path}${Platform.pathSeparator}tesseract${Platform.pathSeparator}tesseract.exe';
+    return await OcrIntegrity.matchesFile(
+          File(path),
+          OcrIntegrity.windowsEngineHash,
+        )
+        ? path
+        : null;
   }
 
   Future<bool> get available async {
@@ -84,24 +94,14 @@ class OcrService {
   }
 
   Future<Directory> _modelsDirectory() async {
-    final base = await getApplicationSupportDirectory();
+    final appDir = _bundleRoot.path;
+    final separator = Platform.pathSeparator;
     final directory = Directory(
-      '${base.path}${Platform.pathSeparator}tessdata',
+      '$appDir${separator}data${separator}flutter_assets${separator}assets${separator}tessdata',
     );
-    await directory.create(recursive: true);
-    for (final name in ['eng', 'heb', 'rus']) {
-      final file = File(
-        '${directory.path}${Platform.pathSeparator}$name.traineddata',
-      );
-      if (!await file.exists()) {
-        final bytes = await rootBundle.load(
-          'assets/tessdata/$name.traineddata',
-        );
-        await file.writeAsBytes(
-          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
-          flush: true,
-        );
-      }
+    if (await FileSystemEntity.type(directory.path, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw const OcrUnavailableException();
     }
     return directory;
   }
@@ -111,7 +111,9 @@ class OcrService {
   Future<String?> recognize(PdfPage page) async {
     if (!Platform.isAndroid && !Platform.isWindows) return null;
     final exe = Platform.isWindows ? await _windowsExecutable() : null;
-    if (Platform.isWindows && exe == null) return null;
+    if (Platform.isWindows && exe == null) {
+      throw const OcrUnavailableException();
+    }
     final image = await page.render(
       fullWidth: page.width * 2.5,
       fullHeight: page.height * 2.5,
@@ -131,7 +133,7 @@ class OcrService {
       final png = await decoded.toByteData(format: ui.ImageByteFormat.png);
       decoded.dispose();
       if (png == null) return null;
-      final root = await getTemporaryDirectory();
+      final root = _temporaryDirectory ?? await getTemporaryDirectory();
       temp = await root.createTemp('financial-diary-ocr-');
       final input = File('${temp.path}${Platform.pathSeparator}page.png');
       await input.writeAsBytes(
@@ -146,22 +148,42 @@ class OcrService {
         );
       }
       final models = await _modelsDirectory();
-      final result = await Process.run(
-        exe!,
-        [
-          input.path,
-          'stdout',
-          '--tessdata-dir',
-          models.path,
-          '-l',
-          'heb+eng+rus',
-          '--psm',
-          '6',
-        ],
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      ).timeout(const Duration(minutes: 2));
-      return result.exitCode == 0 ? result.stdout as String : null;
+      final engine = File(exe!);
+      final modelFiles = [
+        for (final name in OcrIntegrity.modelHashes.keys)
+          File('${models.path}${Platform.pathSeparator}$name.traineddata'),
+      ];
+      return await OcrIntegrity.withLockedFiles(
+        [engine, ...modelFiles],
+        () async {
+          if (!await OcrIntegrity.matchesFile(
+            engine,
+            OcrIntegrity.windowsEngineHash,
+          )) {
+            throw const OcrUnavailableException();
+          }
+          for (var i = 0; i < modelFiles.length; i++) {
+            if (!await OcrIntegrity.matchesFile(
+              modelFiles[i],
+              OcrIntegrity.modelHashes.values.elementAt(i),
+            )) {
+              throw const OcrUnavailableException();
+            }
+          }
+          return OcrIntegrity.runProcess(exe, [
+            input.path,
+            'stdout',
+            '--tessdata-dir',
+            models.path,
+            '-l',
+            'heb+eng+rus',
+            '--psm',
+            '6',
+          ]);
+        },
+      );
+    } on OcrUnavailableException {
+      rethrow;
     } on Exception {
       return null;
     } finally {

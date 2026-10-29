@@ -65,4 +65,49 @@ void main() {
       throwsA(isA<VaultException>()),
     );
   });
+
+  test('Windows vault location preserves existing and fresh diaries', () async {
+    final roaming = Directory('${temp.path}/roaming');
+    final current = Directory('${roaming.path}/Financial Diary');
+    final legacyFile = File(
+      '${roaming.path}/com.example/finance_diary/diary.vault',
+    );
+    final currentFile = File('${current.path}/diary.vault');
+    Future<Vault> selected() => Vault.selectWindowsLocation(
+      roamingDirectory: roaming,
+      currentDirectory: current,
+    );
+    String normalized(String path) => path.replaceAll('\\', '/');
+
+    expect(
+      normalized((await selected()).file.path),
+      normalized(legacyFile.path),
+    );
+    await legacyFile.parent.create(recursive: true);
+    await legacyFile.writeAsString('legacy encrypted bytes');
+    expect(
+      normalized((await selected()).file.path),
+      normalized(legacyFile.path),
+    );
+
+    await current.create(recursive: true);
+    await currentFile.writeAsString('legacy encrypted bytes');
+    expect(
+      normalized((await selected()).file.path),
+      normalized(legacyFile.path),
+    );
+    expect(await currentFile.readAsString(), 'legacy encrypted bytes');
+
+    await currentFile.writeAsString('new encrypted bytes');
+    await expectLater(selected(), throwsA(isA<VaultLocationConflict>()));
+    expect(await legacyFile.readAsString(), 'legacy encrypted bytes');
+    expect(await currentFile.readAsString(), 'new encrypted bytes');
+
+    await legacyFile.delete();
+    expect(
+      normalized((await selected()).file.path),
+      normalized(currentFile.path),
+    );
+    expect(await currentFile.readAsString(), 'new encrypted bytes');
+  });
 }
