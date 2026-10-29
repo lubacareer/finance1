@@ -1,5 +1,17 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Check the statement, then assign or explicitly skip these entries.':
+        'יש לבדוק את הדוח ולאחר מכן לשייך או לדלג במפורש על התנועות האלה.',
+    'No transactions selected for import.': 'לא נבחרו תנועות לייבוא.',
+    'Choose a destination or skip unidentified entries on page {page}.':
+        'יש לבחור חשבון יעד או לדלג על התנועות הלא מזוהות בעמוד {page}.',
+    'Choose a destination or skip unidentified entries with unknown page.': 'יש לבחור חשבון יעד או לדלג על התנועות הלא מזוהות שמספר העמוד שלהן אינו ידוע.',
+    'Purchases skipped by card or page choice':
+        'רכישות שדולגו לפי בחירת כרטיס או עמוד',
+    'Payment totals skipped by card or page choice':
+        'סכומי חיוב שדולגו לפי בחירת כרטיס או עמוד',
+    'Payment totals excluded because review is off':
+        'סכומי חיוב שלא נכללו כי הבדיקה לא נבחרה',
     'Conflicting saved card mappings require review.':
         'קיימים שיוכי כרטיס סותרים שיש לבדוק.',
     'Enter a provider and exactly four card digits, or leave both blank':
@@ -389,6 +401,16 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Check the statement, then assign or explicitly skip these entries.': 'Проверьте выписку, затем назначьте эти операции или явно пропустите их.',
+    'No transactions selected for import.': 'Операции для импорта не выбраны.',
+    'Choose a destination or skip unidentified entries on page {page}.': 'Выберите счёт назначения или пропустите неопознанные операции на странице {page}.',
+    'Choose a destination or skip unidentified entries with unknown page.': 'Выберите счёт назначения или пропустите неопознанные операции с неизвестной страницей.',
+    'Purchases skipped by card or page choice':
+        'Покупки, пропущенные по выбору карты или страницы',
+    'Payment totals skipped by card or page choice':
+        'Суммы платежей, пропущенные по выбору карты или страницы',
+    'Payment totals excluded because review is off':
+        'Суммы платежей исключены, так как их проверка отключена',
     'Conflicting saved card mappings require review.':
         'Сохранённые сопоставления карт противоречат друг другу; проверьте их.',
     'Enter a provider and exactly four card digits, or leave both blank': 'Укажите платёжную компанию и ровно четыре цифры карты или оставьте оба поля пустыми',

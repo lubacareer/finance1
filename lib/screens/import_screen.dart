@@ -59,6 +59,7 @@ class _ImportScreenState extends State<ImportScreen> {
   ImportPreview? preview;
   String? fileName;
   String? error;
+  String? assignmentError;
   bool loading = false;
   bool expense = false;
   bool summary = false;
@@ -70,6 +71,7 @@ class _ImportScreenState extends State<ImportScreen> {
   // New accounts and mappings remain local until the confirmed save succeeds.
   final Map<String, String> cardDestinations = {};
   final Map<int?, String> unidentifiedDestinations = {};
+  int skippedPurchases = 0, skippedPayments = 0, excludedPayments = 0;
   final List<Map<String, dynamic>> stagedAccounts = [];
   late String selectedAccountId;
   static const _skipCard = '__skip_card__';
@@ -139,27 +141,79 @@ class _ImportScreenState extends State<ImportScreen> {
           .firstOrNull ??
       id;
 
+  String _suffix(Map<String, dynamic> row) =>
+      '${row['cardSuffix'] ?? ''}'.trim();
+
+  int? _page(Map<String, dynamic> row) =>
+      row['sourcePage'] is int ? row['sourcePage'] as int : null;
+
+  // Use these exact groups for both the pickers and validation. Null denotes
+  // all unidentified rows whose page could not be determined.
+  Set<int?> get unidentifiedPages => preview!.providerRows!
+      .where((row) => _suffix(row).isEmpty)
+      .map(_page)
+      .toSet();
+
+  Set<String> get detectedCards => {
+    ...preview!.cardSuffixes
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty),
+    ...preview!.providerRows!.map(_suffix).where((value) => value.isNotEmpty),
+  };
+
+  bool validDestination(String? value) =>
+      value != null &&
+      (value == _skipCard ||
+          cardAccounts.any((account) => account['id'] == value));
+
   void makeMultiCardDrafts() {
     final data = preview!;
-    if (data.cardSuffixes.any(
-      (suffix) => !cardDestinations.containsKey(suffix),
+    if (detectedCards.any(
+      (suffix) => !validDestination(cardDestinations[suffix]),
     )) {
-      setState(() => error = t('Choose a destination or skip each card.'));
+      setState(() {
+        assignmentError = t('Choose a destination or skip each card.');
+        drafts = null;
+        refreshMatches();
+      });
       return;
     }
+    for (final page in unidentifiedPages) {
+      if (!validDestination(unidentifiedDestinations[page])) {
+        setState(() {
+          assignmentError = page == null
+              ? t(
+                  'Choose a destination or skip unidentified entries with unknown page.',
+                )
+              : t(
+                  'Choose a destination or skip unidentified entries on page {page}.',
+                ).replaceAll('{page}', '$page');
+          drafts = null;
+          refreshMatches();
+        });
+        return;
+      }
+    }
     final result = <Map<String, dynamic>>[];
+    var purchaseSkips = 0, paymentSkips = 0, paymentOptOuts = 0;
     for (final row in data.candidates(accountId: '')) {
-      final suffix = '${row['cardSuffix'] ?? ''}'.trim();
-      final page = row['sourcePage'] is int ? row['sourcePage'] as int : null;
+      final suffix = _suffix(row);
+      final page = _page(row);
       final destination = suffix.isEmpty
           ? unidentifiedDestinations[page]
           : cardDestinations[suffix];
-      if (destination == null ||
-          destination == _skipCard ||
-          (row['paymentCandidate'] == true && !includePaymentCandidates)) {
+      if (destination == _skipCard) {
+        if (row['paymentCandidate'] == true) {
+          paymentSkips++;
+        } else {
+          purchaseSkips++;
+        }
         continue;
       }
-      if (!cardAccounts.any((a) => a['id'] == destination)) continue;
+      if (row['paymentCandidate'] == true && !includePaymentCandidates) {
+        paymentOptOuts++;
+        continue;
+      }
       row['accountId'] = destination;
       row['cardProvider'] = data.format.substring(4);
       result.add(row);
@@ -174,11 +228,17 @@ class _ImportScreenState extends State<ImportScreen> {
       result[i]['id'] = 'import-$stamp-$i';
     }
     setState(() {
+      assignmentError = null;
+      skippedPurchases = purchaseSkips;
+      skippedPayments = paymentSkips;
+      excludedPayments = paymentOptOuts;
       drafts = result;
       refreshMatches();
       error = result.isEmpty
           ? t(
-              'No complete transactions found. Check the mapping or add entries manually.',
+              purchaseSkips + paymentSkips + paymentOptOuts > 0
+                  ? 'No transactions selected for import.'
+                  : 'No complete transactions found. Check the mapping or add entries manually.',
             )
           : null;
     });
@@ -233,6 +293,7 @@ class _ImportScreenState extends State<ImportScreen> {
                 drafts = null;
                 refreshMatches();
                 error = null;
+                assignmentError = null;
               });
             },
     );
@@ -248,7 +309,7 @@ class _ImportScreenState extends State<ImportScreen> {
             : t('Unidentified entries on page {page}')
                   .replaceAll('{page}', '$page'),
         helperText: t(
-          'Assign only after checking the statement; otherwise these rows are skipped.',
+          'Check the statement, then assign or explicitly skip these entries.',
         ),
       ),
       items: [
@@ -275,6 +336,8 @@ class _ImportScreenState extends State<ImportScreen> {
                 unidentifiedDestinations[page] = value!;
                 drafts = null;
                 refreshMatches();
+                assignmentError = null;
+                error = null;
               });
             },
     );
@@ -345,6 +408,21 @@ class _ImportScreenState extends State<ImportScreen> {
     super.didUpdateWidget(oldWidget);
     if (widget.existing != oldWidget.existing ||
         widget.accounts != oldWidget.accounts) {
+      if (widget.accounts != oldWidget.accounts) {
+        final previous =
+            cardDestinations.length + unidentifiedDestinations.length;
+        cardDestinations.removeWhere(
+          (_, destination) => !validDestination(destination),
+        );
+        unidentifiedDestinations.removeWhere(
+          (_, destination) => !validDestination(destination),
+        );
+        if (cardDestinations.length + unidentifiedDestinations.length !=
+            previous) {
+          drafts = null;
+          assignmentError = null;
+        }
+      }
       refreshMatches();
     }
   }
@@ -410,6 +488,7 @@ class _ImportScreenState extends State<ImportScreen> {
         if (widget.accountId.isEmpty) selectedAccountId = '';
         selectedCardSuffix = null;
         includePaymentCandidates = false;
+        assignmentError = null;
         unidentifiedCardAcknowledged = false;
         includedUnidentifiedCalPages.clear();
         cardDestinations.clear();
@@ -862,21 +941,9 @@ class _ImportScreenState extends State<ImportScreen> {
                         'Card identifiers show only the last four digits. Check the statement to confirm each card.',
                       ),
                     ),
-                    for (final suffix in data.cardSuffixes)
+                    for (final suffix in detectedCards)
                       cardDestinationPicker(suffix),
-                    for (final page
-                        in data.providerRows!
-                            .where(
-                              (row) =>
-                                  row['cardSuffix'] == null ||
-                                  '${row['cardSuffix']}'.trim().isEmpty,
-                            )
-                            .map(
-                              (row) => row['sourcePage'] is int
-                                  ? row['sourcePage'] as int
-                                  : null,
-                            )
-                            .toSet())
+                    for (final page in unidentifiedPages)
                       unidentifiedDestinationPicker(page),
                   ] else ...[
                     if ((data.format == 'pdf:MAX' ||
@@ -978,7 +1045,19 @@ class _ImportScreenState extends State<ImportScreen> {
                       onChanged: (value) => setState(() {
                         includePaymentCandidates = value ?? false;
                         drafts = null;
+                        refreshMatches();
+                        error = null;
                       }),
+                    ),
+                  if (multiCard && assignmentError != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        assignmentError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   FilledButton.tonal(
                     onPressed: makeDrafts,
@@ -1062,6 +1141,17 @@ class _ImportScreenState extends State<ImportScreen> {
                   '${t('Review transactions')}: ${drafts!.length}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
+                if (multiCard) ...[
+                  Text(
+                    '${t('Purchases skipped by card or page choice')}: $skippedPurchases',
+                  ),
+                  Text(
+                    '${t('Payment totals skipped by card or page choice')}: $skippedPayments',
+                  ),
+                  Text(
+                    '${t('Payment totals excluded because review is off')}: $excludedPayments',
+                  ),
+                ],
                 Text(
                   t(
                     'Check dates, amounts, signs and descriptions against the original statement.',

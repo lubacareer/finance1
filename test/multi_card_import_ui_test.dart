@@ -262,7 +262,13 @@ void main() {
       await choose(tester, 'card-destination-1111-null', 'Card A');
       await tester.tap(find.text('Prepare review'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Known  •'), findsOneWidget);
+      expect(
+        find.text(
+          'Choose a destination or skip unidentified entries on page 2.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Known  •'), findsNothing);
       expect(find.textContaining('Unknown  •'), findsNothing);
       await choose(tester, 'unidentified-2-null', 'Card A');
       await tester.tap(find.text('Prepare review'));
@@ -280,6 +286,192 @@ void main() {
       expect(saved, hasLength(3));
     },
   );
+
+  for (final format in ['CAL', 'MAX']) {
+    testWidgets(
+      '$format requires every unidentified page and reports exclusions',
+      (tester) async {
+        tester.view.physicalSize = const Size(1400, 3200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        List<Map<String, dynamic>>? saved;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportScreen(
+              accountId: '',
+              tr: (s) => s,
+              onSave: (_) async {},
+              accounts: const [
+                {'id': 'a', 'name': 'Card A', 'type': 'card'},
+              ],
+              onSaveMulti: (rows, _, _, _, _, _) async => saved = rows,
+              parseFile: (_, _) async => ImportPreview(
+                format: 'pdf:$format',
+                rows: const [],
+                warnings: const [],
+                cardSuffixes: const ['1111', '2222'],
+                providerRows: [
+                  row('Known', '1111', page: 1),
+                  row('Known total', '1111', page: 1, payment: true),
+                  row('Skipped card', '2222', page: 2),
+                  row('Skipped card total', '2222', page: 2, payment: true),
+                  row('Unidentified purchase', null, page: 7),
+                  row('Unidentified total', null, page: 7, payment: true),
+                  row('Other unidentified purchase', null, page: 8),
+                  row('Unknown-page total', null, payment: true),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Choose a file'));
+        await tester.pumpAndSettle();
+        await choose(tester, 'card-destination-1111-null', 'Card A');
+        await choose(tester, 'card-destination-2222-null', 'Skip this card');
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Choose a destination or skip unidentified entries on page 7.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Confirm import'), findsNothing);
+        await choose(
+          tester,
+          'unidentified-7-null',
+          'Skip unidentified entries',
+        );
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Choose a destination or skip unidentified entries on page 8.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Confirm import'), findsNothing);
+        await choose(tester, 'unidentified-8-null', 'Card A');
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Choose a destination or skip unidentified entries with unknown page.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Confirm import'), findsNothing);
+        await choose(tester, 'unidentified-null-null', 'Card A');
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Purchases skipped by card or page choice: 2'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals skipped by card or page choice: 2'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals excluded because review is off: 2'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Known  •'), findsOneWidget);
+        expect(find.textContaining('Unknown-page total  •'), findsNothing);
+
+        await tester.ensureVisible(find.text('Review statement payment total'));
+        await tester.tap(find.text('Review statement payment total'));
+        await tester.pumpAndSettle();
+        expect(find.text('Confirm import'), findsNothing);
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Purchases skipped by card or page choice: 2'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals skipped by card or page choice: 2'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals excluded because review is off: 0'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Unknown-page total  •'), findsOneWidget);
+
+        await choose(tester, 'unidentified-7-__skip_card__', 'Card A');
+        expect(find.text('Confirm import'), findsNothing);
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Purchases skipped by card or page choice: 1'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals skipped by card or page choice: 1'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Payment totals excluded because review is off: 0'),
+          findsOneWidget,
+        );
+        await tester.ensureVisible(find.text('Confirm import'));
+        await tester.tap(find.text('Confirm import'));
+        await tester.pumpAndSettle();
+        expect(saved!.map((r) => r['description']).toSet(), {
+          'Known',
+          'Known total',
+          'Unidentified purchase',
+          'Unidentified total',
+          'Other unidentified purchase',
+          'Unknown-page total',
+        });
+        expect(saved!.every((r) => r['accountId'] == 'a'), isTrue);
+      },
+    );
+  }
+
+  testWidgets('canceling page assignment never saves an import', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var saved = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImportScreen(
+          accountId: '',
+          tr: (s) => s,
+          onSave: (_) async {},
+          accounts: const [
+            {'id': 'a', 'name': 'Card A', 'type': 'card'},
+          ],
+          onSaveMulti: (_, _, _, _, _, _) async {
+            saved = true;
+          },
+          parseFile: (_, _) async => ImportPreview(
+            format: 'pdf:CAL',
+            rows: const [],
+            warnings: const [],
+            cardSuffixes: const ['1111'],
+            providerRows: [row('Known', '1111'), row('Unknown', null, page: 8)],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Choose a file'));
+    await tester.pumpAndSettle();
+    await choose(tester, 'card-destination-1111-null', 'Card A');
+    await choose(tester, 'unidentified-8-null', 'Skip unidentified entries');
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    expect(find.text('Confirm import'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(saved, isFalse);
+  });
 
   testWidgets('global bank import requires an account', (tester) async {
     tester.view.physicalSize = const Size(1400, 2600);
