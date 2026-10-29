@@ -409,7 +409,6 @@ class DiaryController extends ChangeNotifier {
     }
     final confirmed = <Map<String, dynamic>>[];
     final keys = <(String, String)>{};
-    final targets = <String>{};
     for (final mapping in cardMappings) {
       final provider = mapping['provider'];
       final suffix = mapping['cardSuffix'];
@@ -420,8 +419,7 @@ class DiaryController extends ChangeNotifier {
           !RegExp(r'^\d{4}$').hasMatch(suffix) ||
           target is! String ||
           !nextAccounts.any((a) => a['id'] == target && a['type'] == 'card') ||
-          !keys.add((provider.trim().toUpperCase(), suffix)) ||
-          !targets.add(target)) {
+          !keys.add((provider.trim().toUpperCase(), suffix))) {
         throw ArgumentError('Invalid or conflicting card mapping.');
       }
       confirmed.add({
@@ -509,6 +507,130 @@ class DiaryController extends ChangeNotifier {
       _data['imports'] = history;
     }
     _extendRecurring();
+    await _save();
+  }
+
+  /// Capture everything used by the move preview, including balances and
+  /// history, so a confirmation can never apply to a different diary state.
+  Map<String, dynamic> cardAccountMoveSnapshot(
+    String sourceAccountId,
+    String destinationAccountId,
+  ) {
+    _assertEditable();
+    if (sourceAccountId == destinationAccountId ||
+        !accounts.any(
+          (a) => a['id'] == sourceAccountId && a['type'] == 'card',
+        ) ||
+        !accounts.any(
+          (a) => a['id'] == destinationAccountId && a['type'] == 'card',
+        )) {
+      throw ArgumentError('Select two different credit card accounts.');
+    }
+    return _deepCopy({
+      'sourceAccountId': sourceAccountId,
+      'destinationAccountId': destinationAccountId,
+      'accounts': accounts,
+      'entries': entries,
+      'cardMappings': cardMappings,
+      'imports': imports,
+    });
+  }
+
+  /// Move the source account's entries and mapping suggestions as one write.
+  /// Existing links, IDs, and statement membership remain unchanged.
+  Future<void> moveCardAccountEntries(
+    String sourceAccountId,
+    String destinationAccountId, {
+    required Map<String, dynamic> expectedSnapshot,
+    String? assignProvider,
+    String? assignSuffix,
+  }) async {
+    _assertEditable();
+    final snapshot = cardAccountMoveSnapshot(
+      sourceAccountId,
+      destinationAccountId,
+    );
+    if (jsonEncode(snapshot) != jsonEncode(expectedSnapshot)) {
+      throw StateError(
+        'The diary changed since review. Review the move again.',
+      );
+    }
+    final provider = assignProvider?.trim().toUpperCase();
+    final suffix = assignSuffix?.trim();
+    if ((provider == null) != (suffix == null) ||
+        (provider != null &&
+            (provider.isEmpty || !RegExp(r'^\d{4}$').hasMatch(suffix!)))) {
+      throw ArgumentError(
+        'Provide a card provider and four-digit suffix together.',
+      );
+    }
+    final mappings = cardMappings;
+    final mappingKeys = <(String, String)>{};
+    for (final mapping in mappings) {
+      final key = (
+        '${mapping['provider']}'.trim().toUpperCase(),
+        '${mapping['cardSuffix']}',
+      );
+      if (!mappingKeys.add(key)) {
+        throw StateError('Conflicting saved card mappings require review.');
+      }
+    }
+    final list = entries;
+    final movedIds = <String>{
+      for (final row in list)
+        if (row['accountId'] == sourceAccountId) '${row['id']}',
+    };
+    for (final row in list) {
+      final moved = movedIds.contains('${row['id']}');
+      final sourceId = row['recurringSourceId'];
+      // An occurrence that no longer shares its source account is an explicit
+      // override. Otherwise the next recurrence expansion could undo the move.
+      if (sourceId != null && moved != movedIds.contains('$sourceId')) {
+        row['recurringOverridden'] = true;
+      }
+      if (!moved) continue;
+      row['accountId'] = destinationAccountId;
+      final oldProvider = '${row['cardProvider'] ?? ''}'.trim();
+      final oldSuffix = '${row['cardSuffix'] ?? ''}'.trim();
+      final identified =
+          oldProvider.isNotEmpty && RegExp(r'^\d{4}$').hasMatch(oldSuffix);
+      if (!identified && provider != null) {
+        row['cardProvider'] = provider;
+        row['cardSuffix'] = suffix;
+      }
+      // An explicit identity assignment to a source could otherwise rewrite
+      // already-identified occurrences on the next recurrence expansion.
+      if (provider != null && sourceId != null) {
+        row['recurringOverridden'] = true;
+      }
+    }
+    for (final mapping in mappings) {
+      if (mapping['accountId'] == sourceAccountId) {
+        mapping['accountId'] = destinationAccountId;
+      }
+    }
+    final byId = {for (final row in list) '${row['id']}': row};
+    final history = imports;
+    for (final batch in history) {
+      final ids = (batch['entryIds'] as List? ?? []).map((v) => '$v').toSet();
+      if (!ids.any(movedIds.contains)) continue;
+      final affected = <String>{
+        for (final id in ids)
+          if (byId[id]?['accountId'] != null) '${byId[id]!['accountId']}',
+      };
+      if (affected.isNotEmpty) {
+        batch['accountId'] = affected.first;
+        batch['accountIds'] = affected.toList();
+      }
+      final edited = (batch['editedIds'] as List? ?? [])
+          .map((v) => '$v')
+          .toSet();
+      edited.addAll(ids.intersection(movedIds));
+      batch['editedIds'] = edited.toList();
+    }
+    _data['entries'] = list;
+    _data['cardMappings'] = mappings;
+    _data['imports'] = history;
     await _save();
   }
 

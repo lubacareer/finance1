@@ -1,4 +1,33 @@
 import 'currency.dart';
+import 'card_identity.dart';
+
+/// Distinct, fully identified cards must never be treated as the same card.
+bool cardIdentityConflict(
+  Map<String, dynamic> first,
+  Map<String, dynamic> second,
+) {
+  final a = cardIdentity(first);
+  final b = cardIdentity(second);
+  return a != null && b != null && a != b;
+}
+
+/// An exact match in a card account with an unknown identity is only a
+/// suggestion: the user must decide whether the two purchases are the same.
+bool cardMatchNeedsReview(
+  Map<String, dynamic> first,
+  Map<String, dynamic> second, {
+  Set<String> cardAccountIds = const {},
+}) {
+  final cardContext =
+      cardAccountIds.contains('${first['accountId']}') ||
+      cardAccountIds.contains('${second['accountId']}') ||
+      first['cardProvider'] != null ||
+      second['cardProvider'] != null ||
+      first['cardSuffix'] != null ||
+      second['cardSuffix'] != null;
+  return cardContext &&
+      (cardIdentity(first) == null || cardIdentity(second) == null);
+}
 
 // Keep each field separate so even a separator inside user-provided text
 // cannot make two different transactions share a key.
@@ -53,11 +82,26 @@ Map<String, Map<String, dynamic>> exactImportMatches(
     if (k != null) (pools[k] ??= []).add(row);
   }
   final result = <String, Map<String, dynamic>>{};
-  for (final draft in drafts) {
+  // Match identified drafts first so an unidentified row cannot consume the
+  // only saved match for a later draft with the same known card.
+  final orderedDrafts = [
+    ...drafts.where((row) => cardIdentity(row) != null),
+    ...drafts.where((row) => cardIdentity(row) == null),
+  ];
+  for (final draft in orderedDrafts) {
     final k = key(draft);
     final candidates = k == null ? null : pools[k];
     if (candidates != null && candidates.isNotEmpty) {
-      result['${draft['id']}'] = candidates.removeAt(0);
+      final identity = cardIdentity(draft);
+      var index = identity == null
+          ? -1
+          : candidates.indexWhere((saved) => cardIdentity(saved) == identity);
+      if (index < 0) {
+        index = candidates.indexWhere(
+          (saved) => !cardIdentityConflict(draft, saved),
+        );
+      }
+      if (index >= 0) result['${draft['id']}'] = candidates.removeAt(index);
     }
   }
   return result;
@@ -97,6 +141,7 @@ Map<String, Map<String, dynamic>> pendingImportMatches(
       final samePending =
           (saved['pending'] == true) == (draft['pending'] == true);
       return !used.contains('${saved['id']}') &&
+          !cardIdentityConflict(draft, saved) &&
           !samePending &&
           (saved['pending'] == true
               ? saved['status'] == 'planned' &&

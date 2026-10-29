@@ -1,5 +1,41 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Conflicting saved card mappings require review.':
+        'קיימים שיוכי כרטיס סותרים שיש לבדוק.',
+    'Enter a provider and exactly four card digits, or leave both blank':
+        'יש להזין חברת כרטיס וארבע ספרות בדיוק, או להשאיר את שניהם ריקים',
+    'Card last four digits (optional)':
+        'ארבע הספרות האחרונות של הכרטיס (אופציונלי)',
+    'Card provider (optional)': 'חברת הכרטיס (אופציונלי)',
+    'Possible match: card identity is incomplete':
+        'התאמה אפשרית: פרטי הכרטיס אינם מלאים',
+    'Move all transactions': 'העברת כל התנועות',
+    'Move transactions': 'העברת תנועות',
+    'From': 'מחשבון',
+    'Destination account': 'חשבון יעד',
+    'Create another credit card account first.':
+        'יש ליצור תחילה חשבון כרטיס אשראי נוסף.',
+    'Affected statements': 'דוחות מושפעים',
+    'Opening balances stay in their original accounts.':
+        'יתרות הפתיחה נשארות בחשבונות המקוריים.',
+    'Three-month projected balances before and after the move:':
+        'יתרות חזויות לשלושה חודשים לפני ההעברה ואחריה:',
+    'Account balance': 'יתרת חשבון',
+    'Unknown': 'לא ידוע',
+    'Unidentified card': 'כרטיס לא מזוהה',
+    'All cards': 'כל הכרטיסים',
+    'Assign a card to unidentified transactions':
+        'שיוך כרטיס לתנועות לא מזוהות',
+    'Card provider': 'חברת הכרטיס',
+    'Last four card digits': 'ארבע הספרות האחרונות של הכרטיס',
+    'Check the statement before assigning this card.':
+        'יש לבדוק את הדוח לפני שיוך הכרטיס.',
+    'Enter a provider and four-digit card suffix.':
+        'יש להזין חברת כרטיס וארבע ספרות אחרונות.',
+    'The diary changed since this preview. Close and reopen the move to review again.': 'היומן השתנה מאז התצוגה המקדימה. יש לסגור ולפתוח מחדש את ההעברה לבדיקה.',
+    'Move changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'שינויי ההעברה נותרו בזיכרון אך לא נשמרו. חזרו ליומן ובחרו בניסיון חוזר לשמירתם.',
+    'Save pending changes before continuing.':
+        'יש לשמור את השינויים הממתינים לפני המשך הפעולה.',
     'A transaction changed since review. Close and reopen the import to review again.': 'תנועה השתנתה מאז הבדיקה. יש לסגור ולפתוח מחדש את הייבוא כדי לבדוק שוב.',
     'Changes not saved': 'השינויים לא נשמרו',
     'Import changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'שינויי הייבוא נותרו בזיכרון אך לא נשמרו. חזרו ליומן והשתמשו בניסיון חוזר כדי לשמור אותם.',
@@ -353,6 +389,41 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Conflicting saved card mappings require review.':
+        'Сохранённые сопоставления карт противоречат друг другу; проверьте их.',
+    'Enter a provider and exactly four card digits, or leave both blank': 'Укажите платёжную компанию и ровно четыре цифры карты или оставьте оба поля пустыми',
+    'Card last four digits (optional)':
+        'Последние четыре цифры карты (необязательно)',
+    'Card provider (optional)': 'Платёжная компания (необязательно)',
+    'Possible match: card identity is incomplete':
+        'Возможное совпадение: данные карты неполные',
+    'Move all transactions': 'Переместить все операции',
+    'Move transactions': 'Переместить операции',
+    'From': 'Из счёта',
+    'Destination account': 'Счёт назначения',
+    'Create another credit card account first.':
+        'Сначала создайте ещё один счёт кредитной карты.',
+    'Affected statements': 'Затронутые выписки',
+    'Opening balances stay in their original accounts.':
+        'Начальные остатки остаются на исходных счетах.',
+    'Three-month projected balances before and after the move:':
+        'Прогноз баланса на три месяца до и после переноса:',
+    'Account balance': 'Баланс счёта',
+    'Unknown': 'Неизвестно',
+    'Unidentified card': 'Неопознанная карта',
+    'All cards': 'Все карты',
+    'Assign a card to unidentified transactions':
+        'Назначить карту неопознанным операциям',
+    'Card provider': 'Платёжная компания',
+    'Last four card digits': 'Последние четыре цифры карты',
+    'Check the statement before assigning this card.':
+        'Проверьте выписку перед назначением карты.',
+    'Enter a provider and four-digit card suffix.':
+        'Укажите платёжную компанию и четыре последние цифры карты.',
+    'The diary changed since this preview. Close and reopen the move to review again.': 'Дневник изменился после просмотра. Закройте и снова откройте перенос для проверки.',
+    'Move changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'Изменения переноса остались в памяти, но не сохранены. Вернитесь в дневник и нажмите «Повторить», чтобы сохранить их.',
+    'Save pending changes before continuing.':
+        'Сохраните ожидающие изменения перед продолжением.',
     'A transaction changed since review. Close and reopen the import to review again.': 'Операция изменилась после проверки. Закройте и снова откройте импорт для повторной проверки.',
     'Changes not saved': 'Изменения не сохранены',
     'Import changes remain in memory but are not saved. Return to the diary and use Retry to save them.': 'Изменения импорта остались в памяти, но не сохранены. Вернитесь в дневник и нажмите «Повторить», чтобы сохранить их.',

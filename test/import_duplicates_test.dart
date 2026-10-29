@@ -115,4 +115,80 @@ void main() {
       isEmpty,
     );
   });
+  test(
+    'shared account duplicates respect card identity and prefer exact identity',
+    () {
+      final draft = {
+        ...row('draft', account: 'card'),
+        'cardProvider': 'max',
+        'cardSuffix': '1111',
+      };
+      final other = {
+        ...row('other', account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '2222',
+      };
+      final same = {
+        ...row('same', account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final unknown = row('unknown', account: 'card');
+      expect(exactImportMatches([draft], [other]), isEmpty);
+      expect(
+        exactImportMatches([draft], [unknown, other, same])['draft']?['id'],
+        'same',
+      );
+      expect(exactImportMatches([draft], [unknown])['draft']?['id'], 'unknown');
+      expect(
+        cardMatchNeedsReview(draft, unknown, cardAccountIds: {'card'}),
+        isTrue,
+      );
+      expect(
+        cardMatchNeedsReview(draft, same, cardAccountIds: {'card'}),
+        isFalse,
+      );
+      expect(
+        cardMatchNeedsReview(row('a'), row('b'), cardAccountIds: {'card'}),
+        isFalse,
+      );
+      final repeated = exactImportMatches(
+        [
+          draft,
+          {...draft, 'id': 'draft2'},
+        ],
+        [same],
+      );
+      expect(repeated, hasLength(1));
+    },
+  );
+  test('pending matching excludes other cards and keeps unknown identities reviewable', () {
+    final draft = {
+      ...row('new', account: 'card'),
+      'status': 'actual',
+      'cardProvider': 'MAX',
+      'cardSuffix': '1111',
+    };
+    final pending = {
+      ...row('old', account: 'card'),
+      'status': 'planned',
+      'pending': true,
+      'cardProvider': 'MAX',
+      'cardSuffix': '2222',
+    };
+    expect(pendingImportMatches([draft], [pending], {}), isEmpty);
+    pending.remove('cardSuffix');
+    expect(pendingImportMatches([draft], [pending], {})['new']?['id'], 'old');
+  });
+  test('unidentified drafts do not consume a known-card match first', () {
+    final unknown = row('unknown', account: 'card');
+    final known = {
+      ...row('known', account: 'card'),
+      'cardProvider': 'MAX',
+      'cardSuffix': '1111',
+    };
+    final saved = {...known, 'id': 'saved'};
+    final matches = exactImportMatches([unknown, known], [saved]);
+    expect(matches.keys, ['known']);
+  });
 }

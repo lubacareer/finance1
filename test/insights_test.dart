@@ -326,4 +326,95 @@ void main() {
       isFalse,
     );
   });
+  test(
+    'card-specific summary ignores purchases from other or unidentified cards',
+    () {
+      final first = {
+        ...row('p1', '2026-04-01', -30, account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final second = {
+        ...row('p2', '2026-04-01', -70, account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final other = {
+        ...row('other', '2026-04-01', -40, account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '2222',
+      };
+      final unknown = row('unknown', '2026-04-01', -5, account: 'card');
+      final summary = {
+        ...row('s', '2026-05-01', -100, account: 'card', kind: 'card_summary'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final group = Insights.matchCandidates([
+        first,
+        second,
+        other,
+        unknown,
+        summary,
+      ]).singleWhere((m) => m['type'] == 'summary_purchases');
+      expect(group['purchaseIds'], containsAll(['p1', 'p2']));
+      expect(group['purchaseIds'], isNot(contains('other')));
+      expect(group['purchaseIds'], isNot(contains('unknown')));
+      final otherIdentical = {
+        ...first,
+        'id': 'duplicate-other',
+        'cardSuffix': '2222',
+      };
+      expect(
+        Insights.matchCandidates([first, otherIdentical])
+            .where((m) => m['type'] == 'duplicate'),
+        isEmpty,
+      );
+    },
+  );
+  test(
+    'unidentified purchases can be suggested for explicit summary review',
+    () {
+      final known = {
+        ...row('known', '2026-04-01', -30, account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final unknown = row('unknown', '2026-04-01', -70, account: 'card');
+      final other = {
+        ...row('other', '2026-04-01', -25, account: 'card'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '2222',
+      };
+      final summary = {
+        ...row('s', '2026-05-01', -100, account: 'card', kind: 'card_summary'),
+        'cardProvider': 'MAX',
+        'cardSuffix': '1111',
+      };
+      final candidate = Insights.matchCandidates([
+        known,
+        unknown,
+        other,
+        summary,
+      ]).singleWhere((m) => m['type'] == 'summary_purchases');
+      expect(candidate['purchaseIds'], containsAll(['known', 'unknown']));
+      expect(candidate['purchaseIds'], isNot(contains('other')));
+      expect(candidate['cardIdentityUncertain'], isTrue);
+    },
+  );
+  test('duplicate suggestions identify incomplete card identities', () {
+    final known = {
+      ...row('known', '2026-04-01', -30, account: 'card'),
+      'cardProvider': 'MAX',
+      'cardSuffix': '1111',
+    };
+    final unknown = row('unknown', '2026-04-01', -30, account: 'card');
+    final candidate = Insights.matchCandidates(
+      [known, unknown],
+      accounts: [
+        {'id': 'card', 'type': 'card'},
+      ],
+    ).singleWhere((m) => m['type'] == 'duplicate');
+    expect(candidate['cardIdentityUncertain'], isTrue);
+  });
 }

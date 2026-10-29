@@ -38,7 +38,7 @@ void main() {
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('multi_import_test_');
     vault = FailingMultiVault(File('${temp.path}/diary'));
-    diary = DiaryController(vault);
+    diary = DiaryController(vault, clock: () => DateTime(2026, 1, 1));
     await diary.create('synthetic-passphrase');
   });
   tearDown(() async {
@@ -95,13 +95,167 @@ void main() {
       await expectLater(
         diary.importEntries(
           [row('new', 'a')],
-          cardMappings: [binding('1234', 'a'), binding('5678', 'a')],
+          cardMappings: [binding('1234', 'a'), binding('1234', 'a')],
         ),
         throwsArgumentError,
       );
       expect(diary.entries.single['description'], 'changed');
     },
   );
+
+  test('multiple card bindings may share one destination', () async {
+    await diary.putAccount(card('a'));
+    await diary.importEntries(
+      [row('one', 'a'), row('two', 'a')],
+      cardMappings: [binding('1234', 'a'), binding('5678', 'a')],
+      multiCardImport: true,
+      fileName: 'synthetic.pdf',
+    );
+    expect(diary.cardMappings, hasLength(2));
+    expect(diary.imports.single['accountIds'], ['a']);
+  });
+
+  test(
+    'move preserves history, links, identities, mappings and account balances',
+    () async {
+      await diary.putAccount({...card('a'), 'balance': 123});
+      await diary.putAccount({...card('b'), 'balance': 456});
+      await diary.importEntries(
+        [
+          {...row('known', 'a'), 'cardProvider': 'CAL', 'cardSuffix': '1111'},
+          {...row('unknown', 'a'), 'cardSuffix': '9999'},
+          row('other', 'b'),
+        ],
+        fileName: 'synthetic.pdf',
+        cardMappings: [binding('1111', 'a')],
+      );
+      await diary.link('known', 'other');
+      final snapshot = diary.cardAccountMoveSnapshot('a', 'b');
+      await diary.moveCardAccountEntries(
+        'a',
+        'b',
+        expectedSnapshot: snapshot,
+        assignProvider: 'max',
+        assignSuffix: '2222',
+      );
+      final known = diary.entries.singleWhere((e) => e['id'] == 'known');
+      final unknown = diary.entries.singleWhere((e) => e['id'] == 'unknown');
+      expect(known['accountId'], 'b');
+      expect(known['cardProvider'], 'CAL');
+      expect(known['cardSuffix'], '1111');
+      expect(known['linkedIds'], contains('other'));
+      expect(unknown['cardProvider'], 'MAX');
+      expect(unknown['cardSuffix'], '2222');
+      expect(diary.cardMappings.single['accountId'], 'b');
+      expect(diary.accounts.singleWhere((a) => a['id'] == 'a')['balance'], 123);
+      expect(diary.accounts.singleWhere((a) => a['id'] == 'b')['balance'], 456);
+      expect(diary.imports.single['accountIds'], ['b']);
+      expect(
+        diary.imports.single['editedIds'],
+        containsAll(['known', 'unknown']),
+      );
+      final backup = await diary.backup();
+      await diary.restore(backup, 'synthetic-passphrase');
+      expect(diary.cardMappings.single['accountId'], 'b');
+      expect(
+        diary.entries.singleWhere((e) => e['id'] == 'known')['linkedIds'],
+        contains('other'),
+      );
+      await diary.deleteImport('${diary.imports.single['id']}');
+      expect(diary.entries, isEmpty);
+      expect(diary.accounts, hasLength(2));
+    },
+  );
+
+  test('move preserves recurrence overrides and deletion tombstones', () async {
+    await diary.putAccount(card('a'));
+    await diary.putAccount(card('b'));
+    await diary.putAccount(card('c'));
+    await diary.putEntry({...row('source', 'a'), 'repeatMonthly': true});
+    final children = diary.entries
+        .where((r) => r['recurringSourceId'] == 'source')
+        .toList();
+    expect(children.length, greaterThanOrEqualTo(2));
+    final deletedId = '${children.first['id']}';
+    await diary.deleteEntry(deletedId);
+    final outside = diary.entries.firstWhere(
+      (r) => r['recurringSourceId'] == 'source',
+    );
+    await diary.putEntry({
+      ...outside,
+      'accountId': 'c',
+      'description': 'user override',
+    });
+    final snap = diary.cardAccountMoveSnapshot('a', 'b');
+    await diary.moveCardAccountEntries(
+      'a',
+      'b',
+      expectedSnapshot: snap,
+      assignProvider: 'MAX',
+      assignSuffix: '1234',
+    );
+    await diary.lock();
+    await diary.unlock('synthetic-passphrase');
+    expect(diary.entries.any((r) => r['id'] == deletedId), isFalse);
+    expect(
+      diary.entries.singleWhere((r) => r['id'] == 'source')['accountId'],
+      'b',
+    );
+    final preserved = diary.entries.singleWhere(
+      (r) => r['id'] == outside['id'],
+    );
+    expect(preserved['accountId'], 'c');
+    expect(preserved['description'], 'user override');
+    expect(preserved['recurringSourceId'], 'source');
+  });
+
+  test('stale move and invalid identities do not change the diary', () async {
+    await diary.putAccount(card('a'));
+    await diary.putAccount(card('b'));
+    await diary.importEntries([row('one', 'a')]);
+    final snapshot = diary.cardAccountMoveSnapshot('a', 'b');
+    await diary.putEntry({...diary.entries.single, 'description': 'changed'});
+    await expectLater(
+      diary.moveCardAccountEntries('a', 'b', expectedSnapshot: snapshot),
+      throwsStateError,
+    );
+    final current = diary.cardAccountMoveSnapshot('a', 'b');
+    await expectLater(
+      diary.moveCardAccountEntries(
+        'a',
+        'b',
+        expectedSnapshot: current,
+        assignProvider: 'MAX',
+        assignSuffix: '123',
+      ),
+      throwsArgumentError,
+    );
+    expect(diary.entries.single['accountId'], 'a');
+  });
+
+  test('failed move persists as one retryable snapshot', () async {
+    await diary.putAccount(card('a'));
+    await diary.putAccount(card('b'));
+    await diary.importEntries(
+      [row('one', 'a')],
+      fileName: 'synthetic.pdf',
+      cardMappings: [binding('1234', 'a')],
+    );
+    final snapshot = diary.cardAccountMoveSnapshot('a', 'b');
+    vault.failWrites = true;
+    await expectLater(
+      diary.moveCardAccountEntries('a', 'b', expectedSnapshot: snapshot),
+      throwsA(isA<FileSystemException>()),
+    );
+    final disk = await Vault(vault.file).unlock('synthetic-passphrase');
+    expect((disk['entries'] as List).single['accountId'], 'a');
+    expect((disk['cardMappings'] as List).single['accountId'], 'a');
+    vault.failWrites = false;
+    await diary.retrySave();
+    final saved = await Vault(vault.file).unlock('synthetic-passphrase');
+    expect((saved['entries'] as List).single['accountId'], 'b');
+    expect((saved['cardMappings'] as List).single['accountId'], 'b');
+  });
 
   test(
     'a deleted destination rejects a stale review without partial changes',

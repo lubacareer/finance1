@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/card_identity.dart';
+
 /// The caller applies the selected action only after this dialog completes.
 enum MatchReviewAction { deleteFirst, deleteSecond, link }
 
@@ -15,11 +17,22 @@ Future<MatchReviewAction?> showMatchReviewDialog({
   final second = byId['${match['secondId']}'];
   if (first == null || second == null) return null;
   final names = {for (final a in accounts) '${a['id']}': '${a['name']}'};
+  final cardAccounts = accounts
+      .where((a) => a['type'] == 'card')
+      .map((a) => '${a['id']}')
+      .toSet();
   final duplicate = match['type'] == 'duplicate';
   final relatedIds =
       (match['purchaseIds'] as List?)?.map((e) => '$e') ?? ['${second['id']}'];
-  String details(Map<String, dynamic> row) =>
-      '${names['${row['accountId']}'] ?? ''}\n${row['date']}  ${row['description']}\n${row['amount']} ${row['currency'] ?? 'ILS'}';
+  String details(Map<String, dynamic> row) {
+    final identity = cardIdentity(row);
+    final card = !cardAccounts.contains('${row['accountId']}')
+        ? ''
+        : identity == null
+        ? ' • ${tr('Unidentified card')}'
+        : ' • ${identity.$1} •••• ${identity.$2}';
+    return '${names['${row['accountId']}'] ?? ''}$card\n${row['date']}  ${row['description']}\n${row['amount']} ${row['currency'] ?? 'ILS'}';
+  }
 
   final selection = await showDialog<MatchReviewAction>(
     context: context,
@@ -32,6 +45,10 @@ Future<MatchReviewAction?> showMatchReviewDialog({
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (match['cardIdentityUncertain'] == true) ...[
+              Text(tr('Possible match: card identity is incomplete')),
+              const SizedBox(height: 12),
+            ],
             if (duplicate) Text(tr('First transaction')),
             Text(details(first)),
             const SizedBox(height: 16),

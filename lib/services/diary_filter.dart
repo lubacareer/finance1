@@ -1,9 +1,13 @@
+import 'card_identity.dart';
+
 /// Filter the diary without modifying or reordering entries.
 /// Dates in a selected range are compared by calendar day, inclusively.
 List<Map<String, dynamic>> filterDiaryEntries(
   List<Map<String, dynamic>> entries, {
   String accountId = 'all',
   String category = 'all',
+  String cardFilter = 'all',
+  Set<String> cardAccountIds = const {},
   String dateFilter = 'all',
   DateTime? rangeStart,
   DateTime? rangeEnd,
@@ -16,6 +20,18 @@ List<Map<String, dynamic>> filterDiaryEntries(
   return entries.where((entry) {
     if (accountId != 'all' && entry['accountId'] != accountId) return false;
     if (category != 'all' && entry['category'] != category) return false;
+    if (cardFilter != 'all') {
+      final identity = cardIdentity(entry);
+      if (cardFilter == 'unidentified') {
+        if (!cardAccountIds.contains('${entry['accountId']}') ||
+            identity != null) {
+          return false;
+        }
+      } else if (identity == null ||
+          cardFilterKey(identity.$1, identity.$2) != cardFilter) {
+        return false;
+      }
+    }
     if (dateFilter == 'all') return true;
     final date = DateTime.tryParse('${entry['date']}');
     if (date == null) return false;

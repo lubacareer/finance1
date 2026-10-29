@@ -13,6 +13,8 @@ import 'screens/forecast_screen.dart';
 import 'screens/import_screen.dart';
 import 'screens/import_history_screen.dart';
 import 'screens/match_review_dialog.dart';
+import 'screens/move_card_account_dialog.dart';
+import 'services/card_identity.dart';
 import 'services/diary_controller.dart';
 import 'services/diary_filter.dart';
 import 'services/excel_export.dart';
@@ -371,7 +373,10 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
-  String accountFilter = 'all', categoryFilter = 'all', dateFilter = 'all';
+  String accountFilter = 'all',
+      categoryFilter = 'all',
+      dateFilter = 'all',
+      cardFilter = 'all';
   DateTimeRange? diaryDateRange;
   bool exportingExcel = false;
   DiaryController get c => widget.controller;
@@ -535,6 +540,19 @@ class _HomeState extends State<Home> {
       }
       await c.clearAccountEntries('${account['id']}');
     }
+  }
+
+  Future<void> moveCardAccount(Map<String, dynamic> account) async {
+    if (c.lastSaveError != null) {
+      message(t('Save pending changes before continuing.'));
+      return;
+    }
+    await showMoveCardAccountDialog(
+      context,
+      controller: c,
+      source: account,
+      tr: t,
+    );
   }
 
   void importHistory() {
@@ -1246,6 +1264,12 @@ class _HomeState extends State<Home> {
         .where((a) => a['id'] == e['accountId'])
         .firstOrNull;
     final amount = (e['amount'] as num?) ?? 0;
+    final identity = cardIdentity(e);
+    final cardLabel = account?['type'] == 'card'
+        ? identity == null
+              ? t('Unidentified card')
+              : '${identity.$1} •••• ${identity.$2}'
+        : null;
     return InkWell(
       key: ValueKey('entry-${e['id']}'),
       onTap: () => editEntry(e),
@@ -1272,7 +1296,7 @@ class _HomeState extends State<Home> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''} • ${t(e['pending'] == true && e['status'] == 'planned'
+                    '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''}${cardLabel == null ? '' : ' • $cardLabel'} • ${t(e['pending'] == true && e['status'] == 'planned'
                         ? 'Pending'
                         : e['status'] == 'planned'
                         ? 'Planned'
@@ -1391,6 +1415,13 @@ class _HomeState extends State<Home> {
                     onPressed: () => clearAccount(a),
                     icon: const Icon(Icons.delete_sweep_outlined),
                   ),
+                  if (a['type'] == 'card')
+                    IconButton(
+                      tooltip: t('Move all transactions'),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => moveCardAccount(a),
+                      icon: const Icon(Icons.drive_file_move_outline),
+                    ),
                 ],
               ),
             ),
@@ -1403,10 +1434,33 @@ class _HomeState extends State<Home> {
           ..sort();
     if (!c.accounts.any((a) => a['id'] == accountFilter)) accountFilter = 'all';
     if (!categories.contains(categoryFilter)) categoryFilter = 'all';
+    final cardAccountIds = c.accounts
+        .where((a) => a['type'] == 'card')
+        .map((a) => '${a['id']}')
+        .toSet();
+    final cardChoices = <String, String>{};
+    for (final row in c.entries) {
+      if (!cardAccountIds.contains('${row['accountId']}') ||
+          (accountFilter != 'all' && row['accountId'] != accountFilter)) {
+        continue;
+      }
+      final identity = cardIdentity(row);
+      if (identity != null) {
+        cardChoices[cardFilterKey(identity.$1, identity.$2)] =
+            '${identity.$1} •••• ${identity.$2}';
+      }
+    }
+    if (cardFilter != 'all' &&
+        cardFilter != 'unidentified' &&
+        !cardChoices.containsKey(cardFilter)) {
+      cardFilter = 'all';
+    }
     final filtered = filterDiaryEntries(
       sortedEntries,
       accountId: accountFilter,
       category: categoryFilter,
+      cardFilter: cardFilter,
+      cardAccountIds: cardAccountIds,
       dateFilter: dateFilter,
       rangeStart: diaryDateRange?.start,
       rangeEnd: diaryDateRange?.end,
@@ -1469,6 +1523,28 @@ class _HomeState extends State<Home> {
                     ),
                 ],
                 onChanged: (v) => setState(() => accountFilter = v ?? 'all'),
+              ),
+            ),
+            SizedBox(
+              width: 180,
+              child: DropdownButton<String>(
+                key: const ValueKey('diary-card-filter'),
+                isExpanded: true,
+                value: cardFilter,
+                items: [
+                  DropdownMenuItem(value: 'all', child: Text(t('All cards'))),
+                  DropdownMenuItem(
+                    value: 'unidentified',
+                    child: Text(t('Unidentified card')),
+                  ),
+                  for (final entry in cardChoices.entries)
+                    DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(entry.value),
+                    ),
+                ],
+                onChanged: (value) =>
+                    setState(() => cardFilter = value ?? 'all'),
               ),
             ),
             SizedBox(

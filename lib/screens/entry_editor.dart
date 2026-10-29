@@ -164,7 +164,9 @@ class _EntryEditorState extends State<_EntryEditor> {
       _category,
       _amount,
       _currency,
-      _amountIls;
+      _amountIls,
+      _cardProvider,
+      _cardSuffix;
   late String? _account;
   late String _kind, _status;
   late String _direction;
@@ -191,6 +193,12 @@ class _EntryEditorState extends State<_EntryEditor> {
     );
     _currency = TextEditingController(
       text: item?['currency']?.toString() ?? 'ILS',
+    );
+    _cardProvider = TextEditingController(
+      text: item?['cardProvider']?.toString() ?? '',
+    );
+    _cardSuffix = TextEditingController(
+      text: item?['cardSuffix']?.toString() ?? '',
     );
     final convertedAmount = item == null ? null : item['amountIls'];
     final existingCurrency = item == null ? 'ILS' : item['currency'];
@@ -228,12 +236,35 @@ class _EntryEditorState extends State<_EntryEditor> {
     _amount.dispose();
     _currency.dispose();
     _amountIls.dispose();
+    _cardProvider.dispose();
+    _cardSuffix.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tr;
+    final isCard = widget.accounts.any(
+      (account) => account['id'] == _account && account['type'] == 'card',
+    );
+    bool unchangedIdentity() =>
+        _cardProvider.text.trim() ==
+            '${widget.existing?['cardProvider'] ?? ''}'.trim() &&
+        _cardSuffix.text.trim() ==
+            '${widget.existing?['cardSuffix'] ?? ''}'.trim();
+    String? validateIdentity() {
+      final provider = _cardProvider.text.trim();
+      final suffix = _cardSuffix.text.trim();
+      // Preserve incomplete legacy identifiers when making unrelated edits.
+      if (unchangedIdentity()) return null;
+      if (provider.isEmpty && suffix.isEmpty) return null;
+      return provider.isNotEmpty && RegExp(r'^\d{4}$').hasMatch(suffix)
+          ? null
+          : t(
+              'Enter a provider and exactly four card digits, or leave both blank',
+            );
+    }
+
     return AlertDialog(
       title: Text(
         t(widget.existing == null ? 'Add transaction' : 'Edit transaction'),
@@ -261,6 +292,26 @@ class _EntryEditorState extends State<_EntryEditor> {
                   validator: (v) =>
                       v == null ? t('Create an account first') : null,
                 ),
+                if (isCard) ...[
+                  TextFormField(
+                    key: const ValueKey('entry-card-provider'),
+                    controller: _cardProvider,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: t('Card provider (optional)'),
+                    ),
+                    validator: (_) => validateIdentity(),
+                  ),
+                  TextFormField(
+                    key: const ValueKey('entry-card-suffix'),
+                    controller: _cardSuffix,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: t('Card last four digits (optional)'),
+                    ),
+                    validator: (_) => validateIdentity(),
+                  ),
+                ],
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(t('Date')),
@@ -446,6 +497,22 @@ class _EntryEditorState extends State<_EntryEditor> {
               'repeatMonthly': _repeatMonthly,
               'linkedIds': widget.existing?['linkedIds'] ?? <String>[],
             };
+            if (isCard && !unchangedIdentity()) {
+              final provider = _cardProvider.text.trim().toUpperCase();
+              final suffix = _cardSuffix.text.trim();
+              if (provider.isEmpty && suffix.isEmpty) {
+                updated.remove('cardProvider');
+                updated.remove('cardSuffix');
+              } else {
+                updated['cardProvider'] = provider;
+                updated['cardSuffix'] = suffix;
+              }
+            } else if (!isCard &&
+                widget.existing != null &&
+                widget.existing!['accountId'] != _account) {
+              updated.remove('cardProvider');
+              updated.remove('cardSuffix');
+            }
             if (sourceChanged || _convertedEdited || currency == 'ILS') {
               updated.remove('rateDate');
               updated.remove('rateSource');

@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'card_identity.dart';
+import 'import_duplicates.dart';
+
 /// Functions operate on the app's JSON-compatible transaction and account maps.
 /// Amounts are signed: income is positive and an expense is negative.
 class Insights {
@@ -106,12 +109,24 @@ class Insights {
                 a['pending'] != true &&
                 (a['status'] ?? 'actual') == 'actual');
         if (a['accountId'] == b['accountId'] &&
+            !(cardIdentity(a) != null &&
+                cardIdentity(b) != null &&
+                cardIdentity(a) != cardIdentity(b)) &&
             (days == 0 || (pendingSettlement && days <= 7)) &&
             _normal(a['description']) == _normal(b['description'])) {
           result.add({
             'type': 'duplicate',
             'firstId': a['id'],
             'secondId': b['id'],
+            if (cardMatchNeedsReview(
+              a,
+              b,
+              cardAccountIds: {
+                for (final entry in types.entries)
+                  if (entry.value == 'card') entry.key,
+              },
+            ))
+              'cardIdentityUncertain': true,
           });
         } else if (a['accountId'] != b['accountId'] &&
             days <= 7 &&
@@ -128,6 +143,8 @@ class Insights {
             'type': 'payment',
             'firstId': a['id'],
             'secondId': b['id'],
+            if (cardIdentity(a['kind'] == 'card_summary' ? a : b) == null)
+              'cardIdentityUncertain': true,
           });
         }
       }
@@ -136,10 +153,14 @@ class Insights {
       final date = _date(summary['date']);
       final amount = _ils(summary);
       if (date == null || amount == null || amount >= 0) continue;
-      final purchases = rows.where((r) {
+      final summaryCard = cardIdentity(summary);
+      final eligible = rows.where((r) {
         final purchaseDate = _date(r['date']);
         final purchaseAmount = _ils(r);
         return r['accountId'] == summary['accountId'] &&
+            (summaryCard == null ||
+                cardIdentity(r) == null ||
+                cardIdentity(r) == summaryCard) &&
             (r['kind'] ?? 'transaction') == 'transaction' &&
             purchaseDate != null &&
             purchaseAmount != null &&
@@ -147,6 +168,16 @@ class Insights {
             !purchaseDate.isAfter(date) &&
             date.difference(purchaseDate).inDays <= 45;
       }).toList();
+      var purchases = summaryCard == null
+          ? eligible
+          : eligible.where((r) => cardIdentity(r) == summaryCard).toList();
+      double sumPurchases(List<Map<String, dynamic>> list) =>
+          list.fold<double>(0, (sum, r) => sum + _ils(r)!);
+      if (summaryCard != null &&
+          (purchases.isEmpty ||
+              (sumPurchases(purchases) - amount).abs() > 0.01)) {
+        purchases = eligible;
+      }
       if (purchases.isEmpty) continue;
       if (involvingIds != null &&
           !involvingIds.contains('${summary['id']}') &&
@@ -162,6 +193,9 @@ class Insights {
         'firstId': summary['id'],
         'secondId': purchases.first['id'],
         'purchaseIds': purchases.map((r) => r['id']).toList(),
+        if (summaryCard == null ||
+            purchases.any((r) => cardIdentity(r) == null))
+          'cardIdentityUncertain': true,
       });
     }
     return result;

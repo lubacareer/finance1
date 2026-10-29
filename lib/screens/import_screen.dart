@@ -147,13 +147,6 @@ class _ImportScreenState extends State<ImportScreen> {
       setState(() => error = t('Choose a destination or skip each card.'));
       return;
     }
-    final destinations = cardDestinations.values
-        .where((id) => id != _skipCard)
-        .toList();
-    if (destinations.toSet().length != destinations.length) {
-      setState(() => error = t('Each card must have a different account.'));
-      return;
-    }
     final result = <Map<String, dynamic>>[];
     for (final row in data.candidates(accountId: '')) {
       final suffix = '${row['cardSuffix'] ?? ''}'.trim();
@@ -168,6 +161,7 @@ class _ImportScreenState extends State<ImportScreen> {
       }
       if (!cardAccounts.any((a) => a['id'] == destination)) continue;
       row['accountId'] = destination;
+      row['cardProvider'] = data.format.substring(4);
       result.add(row);
     }
     result.sort(
@@ -289,7 +283,12 @@ class _ImportScreenState extends State<ImportScreen> {
   String defaultDuplicateChoice(Map<String, dynamic> row) {
     final match = exactMatches['${row['id']}'];
     return match != null &&
-            (match['pending'] == true) != (row['pending'] == true)
+            ((match['pending'] == true) != (row['pending'] == true) ||
+                cardMatchNeedsReview(
+                  row,
+                  match,
+                  cardAccountIds: cardAccounts.map((a) => '${a['id']}').toSet(),
+                ))
         ? 'both'
         : 'existing';
   }
@@ -325,11 +324,20 @@ class _ImportScreenState extends State<ImportScreen> {
         Map<String, dynamic>.from(jsonDecode(jsonEncode(row)) as Map),
       ),
     );
-    matches = Insights.matchCandidates(
-      [...widget.existing, ...current],
-      accounts: [...widget.accounts, ...stagedAccounts],
-      involvingIds: current.map((row) => '${row['id']}').toSet(),
-    );
+    final draftIds = current.map((row) => '${row['id']}').toSet();
+    matches =
+        Insights.matchCandidates(
+              [...widget.existing, ...current],
+              accounts: [...widget.accounts, ...stagedAccounts],
+              involvingIds: draftIds,
+            )
+            .where(
+              (match) =>
+                  match['type'] != 'duplicate' ||
+                  !(draftIds.contains('${match['firstId']}') &&
+                      draftIds.contains('${match['secondId']}')),
+            )
+            .toList();
   }
 
   @override
@@ -503,6 +511,9 @@ class _ImportScreenState extends State<ImportScreen> {
         final stamp = DateTime.now().microsecondsSinceEpoch;
         for (var i = 0; i < drafts!.length; i++) {
           drafts![i]['id'] = 'import-$stamp-$i';
+          if (preview!.format == 'pdf:MAX' || preview!.format == 'pdf:CAL') {
+            drafts![i]['cardProvider'] = preview!.format.substring(4);
+          }
         }
         refreshMatches();
         error = drafts!.isEmpty
@@ -1217,7 +1228,11 @@ class _ImportScreenState extends State<ImportScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${t((exactMatches['${row['id']}']!['pending'] == true) != (row['pending'] == true) ? 'Possible pending match' : 'Exact match already saved')}: '
+                            '${t((exactMatches['${row['id']}']!['pending'] == true) != (row['pending'] == true)
+                                ? 'Possible pending match'
+                                : cardMatchNeedsReview(row, exactMatches['${row['id']}']!, cardAccountIds: cardAccounts.map((a) => '${a['id']}').toSet())
+                                ? 'Possible match: card identity is incomplete'
+                                : 'Exact match already saved')}: '
                             '${exactMatches['${row['id']}']!['description']} | ${(exactMatches['${row['id']}']!['date'] as String).split('T').first} | '
                             '${exactMatches['${row['id']}']!['amount']} ${exactMatches['${row['id']}']!['currency']} | '
                             '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}'

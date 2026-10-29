@@ -128,13 +128,6 @@ void main() {
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(created, isNull);
-    await choose(tester, 'card-destination-2222-null', 'Card A');
-    await tester.tap(find.text('Prepare review'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Each card must have a different account.'),
-      findsOneWidget,
-    );
     final secondPicker = find.byWidgetPredicate(
       (w) =>
           w is DropdownButtonFormField<String> &&
@@ -159,6 +152,62 @@ void main() {
     expect(bindings, hasLength(2));
     expect(saved![0]['accountId'], isNot(saved![1]['accountId']));
     expect(bindings!.map((b) => b['provider']).toSet(), {'MAX'});
+  });
+
+  testWidgets('maps two statement cards to the same new account', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    List<Map<String, dynamic>>? saved, created, bindings;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImportScreen(
+          accountId: '',
+          tr: (s) => s,
+          onSave: (_) async {},
+          onSaveMulti: (rows, _, _, accounts, mappings, _) async {
+            saved = rows;
+            created = accounts;
+            bindings = mappings;
+          },
+          parseFile: (_, _) async => ImportPreview(
+            format: 'pdf:MAX',
+            rows: const [],
+            warnings: const [],
+            cardSuffixes: const ['1111', '2222'],
+            providerRows: [
+              row('First purchase', '1111'),
+              row('Second purchase', '2222'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Choose a file'));
+    await tester.pumpAndSettle();
+    await choose(
+      tester,
+      'card-destination-1111-null',
+      'Create credit card account',
+    );
+    await tester.enterText(find.byType(TextField).last, 'Shared');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    await choose(tester, 'card-destination-2222-null', 'Shared');
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Confirm import'));
+    await tester.tap(find.text('Confirm import'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(2));
+    expect(created, hasLength(1));
+    expect(bindings, hasLength(2));
+    expect(saved!.map((r) => r['accountId']).toSet(), hasLength(1));
+    expect(saved!.map((r) => r['cardProvider']).toSet(), {'MAX'});
+    expect(saved!.map((r) => r['cardSuffix']).toSet(), {'1111', '2222'});
   });
 
   testWidgets(
@@ -285,6 +334,7 @@ void main() {
       ...row('Duplicate', '1111'),
       'id': 'old',
       'accountId': 'a',
+      'cardProvider': 'MAX',
     };
     await tester.pumpWidget(
       MaterialApp(
@@ -338,6 +388,7 @@ void main() {
       ...row('Duplicate', '1111'),
       'id': 'old',
       'accountId': 'a',
+      'cardProvider': 'MAX',
     };
     await tester.pumpWidget(
       MaterialApp(
@@ -377,6 +428,58 @@ void main() {
     expect(bindings!.single['accountId'], 'a');
     expect(bindings!.single['provider'], 'MAX');
     expect(skipped?.single['id'], 'old');
+  });
+
+  testWidgets('legacy card match is shown for review and kept by default', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    List<Map<String, dynamic>>? saved;
+    final existing = {
+      ...row('Duplicate', '1111'),
+      'id': 'old',
+      'accountId': 'a',
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImportScreen(
+          accountId: '',
+          tr: (s) => s,
+          onSave: (_) async {},
+          existing: [existing],
+          accounts: const [
+            {'id': 'a', 'name': 'Card A', 'type': 'card'},
+          ],
+          onSaveMulti: (rows, _, _, _, _, _) async {
+            saved = rows;
+          },
+          parseFile: (_, _) async => ImportPreview(
+            format: 'pdf:MAX',
+            rows: const [],
+            warnings: const [],
+            cardSuffixes: const ['1111'],
+            providerRows: [row('Duplicate', '1111')],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Choose a file'));
+    await tester.pumpAndSettle();
+    await choose(tester, 'card-destination-1111-null', 'Card A');
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Possible match: card identity is incomplete'),
+      findsOneWidget,
+    );
+    expect(find.text('Keep both transactions'), findsOneWidget);
+    await tester.ensureVisible(find.text('Confirm import'));
+    await tester.tap(find.text('Confirm import'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(1));
   });
 
   testWidgets('conflicting saved bindings do not suggest a card', (
