@@ -14,6 +14,8 @@ import 'screens/import_screen.dart';
 import 'screens/import_history_screen.dart';
 import 'screens/match_review_dialog.dart';
 import 'services/diary_controller.dart';
+import 'services/diary_filter.dart';
+import 'services/excel_export.dart';
 import 'services/insights.dart';
 import 'services/manual_numbers.dart';
 import 'services/ocr_service.dart';
@@ -370,6 +372,8 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> {
   int page = 0;
   String accountFilter = 'all', categoryFilter = 'all', dateFilter = 'all';
+  DateTimeRange? diaryDateRange;
+  bool exportingExcel = false;
   DiaryController get c => widget.controller;
   String t(String s) => translate(c.language, s);
   String money(num? value) =>
@@ -378,6 +382,32 @@ class _HomeState extends State<Home> {
     if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(value)));
+    }
+  }
+
+  Future<void> exportExcel(List<Map<String, dynamic>> shown) async {
+    if (exportingExcel || shown.isEmpty) return;
+    setState(() => exportingExcel = true);
+    try {
+      final bytes = buildDiaryWorkbook(
+        filteredRows: shown,
+        allRows: c.entries,
+        accounts: c.accounts,
+        tr: t,
+        rightToLeft: c.language == 'he',
+      );
+      final saved = await FilePicker.saveFile(
+        fileName: 'financial-diary.xlsx',
+        bytes: bytes,
+        mimeType:
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: t('Export to Excel (unencrypted)'),
+      );
+      if (saved != null) message(t('Excel file saved.'));
+    } catch (_) {
+      message(t('Could not save the Excel file.'));
+    } finally {
+      if (mounted) setState(() => exportingExcel = false);
     }
   }
 
@@ -923,6 +953,22 @@ class _HomeState extends State<Home> {
     ],
   );
 
+  Future<void> selectDiaryDateRange() async {
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100, 12, 31),
+      initialDateRange: diaryDateRange,
+      helpText: t('Select date range'),
+    );
+    if (selected != null && mounted) {
+      setState(() {
+        diaryDateRange = selected;
+        dateFilter = 'range';
+      });
+    }
+  }
+
   Widget overview() {
     final now = DateTime.now(), rows = c.entries;
     var income = 0.0, expenses = 0.0;
@@ -1342,19 +1388,14 @@ class _HomeState extends State<Home> {
           ..sort();
     if (!c.accounts.any((a) => a['id'] == accountFilter)) accountFilter = 'all';
     if (!categories.contains(categoryFilter)) categoryFilter = 'all';
-    final now = DateTime.now();
-    final filtered = sortedEntries.where((e) {
-      final date = DateTime.tryParse('${e['date']}');
-      return (accountFilter == 'all' || e['accountId'] == accountFilter) &&
-          (categoryFilter == 'all' || e['category'] == categoryFilter) &&
-          (dateFilter == 'all' ||
-              (date != null &&
-                  (dateFilter == 'month'
-                      ? date.year == now.year && date.month == now.month
-                      : dateFilter == 'future'
-                      ? date.isAfter(now)
-                      : !date.isAfter(now))));
-    }).toList();
+    final filtered = filterDiaryEntries(
+      sortedEntries,
+      accountId: accountFilter,
+      category: categoryFilter,
+      dateFilter: dateFilter,
+      rangeStart: diaryDateRange?.start,
+      rangeEnd: diaryDateRange?.end,
+    );
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -1370,6 +1411,13 @@ class _HomeState extends State<Home> {
               onPressed: importFile,
               icon: const Icon(Icons.upload_file),
               label: Text(t('Import statement')),
+            ),
+            TextButton.icon(
+              onPressed: filtered.isEmpty || exportingExcel
+                  ? null
+                  : () => exportExcel(filtered),
+              icon: const Icon(Icons.table_view_outlined),
+              label: Text(t('Export to Excel (unencrypted)')),
             ),
             if (filtered.isNotEmpty)
               TextButton.icon(
@@ -1458,10 +1506,31 @@ class _HomeState extends State<Home> {
                     value: 'future',
                     child: Text(t('Future'), overflow: TextOverflow.ellipsis),
                   ),
+                  DropdownMenuItem(
+                    value: 'range',
+                    child: Text(
+                      t('Custom date range'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
-                onChanged: (v) => setState(() => dateFilter = v ?? 'all'),
+                onChanged: (v) {
+                  if (v == 'range') {
+                    selectDiaryDateRange();
+                  } else {
+                    setState(() => dateFilter = v ?? 'all');
+                  }
+                },
               ),
             ),
+            if (dateFilter == 'range' && diaryDateRange != null)
+              OutlinedButton.icon(
+                onPressed: selectDiaryDateRange,
+                icon: const Icon(Icons.date_range),
+                label: Text(
+                  '${DateFormat('yyyy-MM-dd').format(diaryDateRange!.start)} – ${DateFormat('yyyy-MM-dd').format(diaryDateRange!.end)}',
+                ),
+              ),
           ],
         ),
         if (filtered.isNotEmpty)

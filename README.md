@@ -44,6 +44,8 @@ New imports automatically skip exact matches with existing transactions in the s
 
 Import history lists statements saved after this feature was added. You can preview and remove all saved transactions from a statement, including edited transactions. Older statements cannot be grouped reliably; use the account's clear-transactions action to remove all its transactions while retaining the account and opening balance. Both actions require confirmation. Import history and reconciliation choices are stored in the encrypted diary and its backups; devices do not synchronize automatically.
 
+The diary can filter entries by account, category and an inclusive custom date range. **Export to Excel (unencrypted)** saves the currently shown entries and a monthly summary as an XLSX workbook. The workbook is a separate, unencrypted file and does not replace an encrypted backup. Summaries separate actual, planned and pending entries, identify missing ILS conversions, and use the full diary's confirmed links to avoid counting reconciled payments twice.
+
 Forecasts are estimates derived from historical records and planned entries. Supply a current bank balance to see a projected balance. Foreign currency amounts use the statement's ILS value when present; otherwise public Bank of Israel exchange rates can be downloaded and cached. Only currency and date are sent to the rate service, never descriptions, amounts or statements. You can also enter a dated rate manually. Missing rates are excluded from ILS totals and flagged.
 
 ## Privacy and project status
