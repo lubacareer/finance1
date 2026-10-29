@@ -351,7 +351,7 @@ YahavPdfResult? parseYahavDocument(
         'kind': 'transaction',
         'status': header.pending ? 'planned' : 'actual',
         'pending': header.pending,
-        'signUncertain': page.fromOcr || (!isDebit && value < 0),
+        'signUncertain': page.fromOcr || value < 0,
         if (page.fromOcr) 'ocrDirectionUnverified': true,
       });
       transactionPages.add(i + 1);

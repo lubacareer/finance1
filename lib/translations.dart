@@ -1,5 +1,14 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Include unidentified CAL entries with unknown page for the selected card':
+        'לכלול תנועות כאל לא מזוהות מעמוד לא ידוע עבור הכרטיס שנבחר',
+    'Page': 'עמוד',
+    'Include unidentified CAL entries from page {page} for the selected card':
+        'לכלול תנועות כאל לא מזוהות מעמוד {page} עבור הכרטיס שנבחר',
+    'Unidentified purchases': 'רכישות לא מזוהות',
+    'Unidentified payment totals': 'סכומי חיוב לא מזוהים',
+    'Rows for other cards are not imported': 'שורות של כרטיסים אחרים לא ייובאו',
+    'Missing rate': 'שער חליפין חסר',
     'Known income (ILS)': 'הכנסות ידועות (ש״ח)',
     'Known expenses (ILS)': 'הוצאות ידועות (ש״ח)',
     'Known net (ILS)': 'נטו ידוע (ש״ח)',
@@ -320,6 +329,14 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Include unidentified CAL entries with unknown page for the selected card': 'Включить неопознанные операции CAL с неизвестной страницы для выбранной карты',
+    'Page': 'Страница',
+    'Include unidentified CAL entries from page {page} for the selected card': 'Включить неопознанные операции CAL со страницы {page} для выбранной карты',
+    'Unidentified purchases': 'Неопознанные покупки',
+    'Unidentified payment totals': 'Неопознанные суммы платежей',
+    'Rows for other cards are not imported':
+        'Строки других карт не импортируются',
+    'Missing rate': 'Отсутствует обменный курс',
     'Known income (ILS)': 'Известные доходы (ILS)',
     'Known expenses (ILS)': 'Известные расходы (ILS)',
     'Known net (ILS)': 'Известное итого (ILS)',

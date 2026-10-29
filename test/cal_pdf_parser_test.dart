@@ -35,15 +35,19 @@ class SyntheticPage {
 SyntheticPage example({
   bool omitLastAmount = false,
   bool refund = false,
+  String? heading,
+  bool includeBilling = true,
   String firstAmount = '₪12.25',
 }) {
   final p = SyntheticPage();
-  p.word('פירוט עסקאות חיובים כרטיס ויזה 1234', 220, 771);
+  p.word(heading ?? 'פירוט עסקאות חיובים כרטיס ויזה 1234', 220, 771);
   p.end();
-  p.word('עסקאות לחיוב', 330, 730);
-  p.word('10/11/26', 270, 731);
-  p.word('₪40.50', 219, 730);
-  p.end();
+  if (includeBilling) {
+    p.word('עסקאות לחיוב', 330, 730);
+    p.word('10/11/26', 270, 731);
+    p.word('₪40.50', 219, 730);
+    p.end();
+  }
   p.word('01/10/26', 480, 702);
   p.word('חנות לדוגמה', 350, 701);
   p.word(firstAmount, 94, 699);
@@ -112,6 +116,96 @@ void main() {
       }
     },
   );
+
+  test('identifies forward and reversed detailed headings independently', () {
+    const normal =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    const reversed =
+        '\u05d8\u05d5\u05e8\u05d9\u05e4 \u05ea\u05d5\u05d0\u05e7\u05e1\u05e2 \u05dd\u05d9\u05d1\u05d5\u05d9\u05d7 \u05e1\u05d9\u05d8\u05e8\u05db';
+    final parsed = parseCalDocument([
+      example(heading: '$normal 1234').page(),
+      example(
+        heading: reversed.replaceFirst(
+          '\u05e1\u05d9\u05d8\u05e8\u05db',
+          '5678 \u05e1\u05d9\u05d8\u05e8\u05db',
+        ),
+        includeBilling: false,
+      ).page(),
+    ])!;
+    expect(parsed.cardSuffixes, {'1234', '5678'});
+    final first = parsed.rows.where((r) => r['sourcePage'] == 1).toList();
+    final second = parsed.rows.where((r) => r['sourcePage'] == 2).toList();
+    expect(first.every((r) => r['cardSuffix'] == '1234'), isTrue);
+    expect(
+      first.where((r) => r['kind'] == 'transaction').first['billingDate'],
+      '2026-11-10',
+    );
+    expect(second.every((r) => r['cardSuffix'] == '5678'), isTrue);
+    expect(second.every((r) => r['billingDate'] == null), isTrue);
+  });
+
+  test('missing, ambiguous and headerless pages stay unidentified', () {
+    const header =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    final parsed = parseCalDocument([
+      example(heading: '$header 1234').page(),
+      example(heading: header).page(),
+      example(heading: '$header 1234 5678').page(),
+      example(heading: 'continuation').page(),
+      example(heading: '$header 10/11/2026').page(),
+      example(heading: '$header 5678').page(ocr: true),
+    ])!;
+    expect(parsed.cardSuffixes, {'1234', '5678'});
+    expect(parsed.incompletePages, containsAll([2, 3, 4, 5]));
+    for (final page in [2, 3, 4, 5]) {
+      final rows = parsed.rows.where((r) => r['sourcePage'] == page).toList();
+      expect(rows, hasLength(3));
+      expect(rows.every((r) => r['cardSuffix'] == null), isTrue);
+      expect(
+        rows
+            .where((r) => r['kind'] == 'transaction')
+            .every((r) => r['billingDate'] == null),
+        isTrue,
+      );
+      expect(
+        rows.singleWhere((r) => r['paymentCandidate'] == true)['billingDate'],
+        '2026-11-10',
+      );
+    }
+    final ocrRows = parsed.rows.where((r) => r['sourcePage'] == 6);
+    expect(
+      ocrRows.every(
+        (r) => r['cardSuffix'] == '5678' && r['ocrDirectionUnverified'] == true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('unrelated reference numbers and unqualified years do not identify cards', () {
+    const header =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    for (final heading in [
+      '$header \u05d0\u05e1\u05de\u05db\u05ea\u05d0 1234',
+      '$header 2026',
+      '$header 1234.56',
+      '$header 1234,56',
+    ]) {
+      final parsed = parseCalDocument([example(heading: heading).page()])!;
+      expect(parsed.cardSuffixes, isEmpty);
+      expect(parsed.rows.every((r) => r['cardSuffix'] == null), isTrue);
+    }
+  });
+
+  test('conflicting detailed headings cannot identify a page', () {
+    const header =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    final page = example(heading: '$header 1234');
+    page.end();
+    page.word('$header 5678', 200, 750);
+    final parsed = parseCalDocument([page.page()])!;
+    expect(parsed.cardSuffixes, isEmpty);
+    expect(parsed.rows.every((r) => r['cardSuffix'] == null), isTrue);
+  });
 
   test('amount-less CAL transaction list is recognized as incomplete', () {
     final p = SyntheticPage();

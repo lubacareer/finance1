@@ -43,6 +43,76 @@ bool _hasDetailedHeader(String text) => text
           _contains(line, 'חיובים'),
     );
 
+// Only detailed statement headings establish card identity. A word such as
+// "card" in a merchant description is not evidence of a new card. Hebrew PDF
+// extraction may reverse the label and place the suffix on either side.
+String? _cardSuffixOnPage(String text) {
+  final headings = text.split(RegExp(r'[\r\n]+')).where(_hasDetailedHeader);
+  final suffixes = <String>{};
+  var foundHeading = false;
+  const label = '\u05db\u05e8\u05d8\u05d9\u05e1';
+  final reversedLabel = label.split('').reversed.join();
+  // Only short, recognizable card-identity words may sit between a label and
+  // a suffix. An unrelated reference or year elsewhere on the heading is not
+  // evidence that the card ends with those digits.
+  const identityWords = [
+    '\u05d5\u05d9\u05d6\u05d4', // Visa
+    '\u05de\u05d0\u05e1\u05d8\u05e8\u05e7\u05d0\u05e8\u05d3', // Mastercard
+    '\u05de\u05d0\u05e1\u05d8\u05e8',
+    '\u05d9\u05e9\u05e8\u05d0\u05db\u05e8\u05d8',
+    '\u05db\u05d0\u05dc',
+    '\u05de\u05e1\u05e4\u05e8',
+    '\u05de\u05e1\u05ea\u05d9\u05d9\u05dd',
+    '\u05d4\u05de\u05e1\u05ea\u05d9\u05d9\u05dd',
+    'visa',
+    'mastercard',
+    'master',
+    'cal',
+    'ending',
+    'in',
+  ];
+  final connector = RegExp(
+    '^(?:[\\s\\u00a0*#xX.:\\-]|${identityWords.expand((word) => [RegExp.escape(word), RegExp.escape(word.split('').reversed.join())]).join('|')})*\$',
+    caseSensitive: false,
+  );
+  for (final heading in headings) {
+    foundHeading = true;
+    final labels = RegExp(
+      '${RegExp.escape(label)}|${RegExp.escape(reversedLabel)}',
+    ).allMatches(heading).toList();
+    if (labels.length != 1) return null;
+    // Consecutive suffix-like numbers could represent multiple cards.
+    if (RegExp(r'(?<!\d)\d{4}\s+\d{4}(?!\d)').hasMatch(heading)) {
+      return null;
+    }
+    final labelMatch = labels.single;
+    final dates = _dates.allMatches(heading).toList();
+    final matches = RegExp(r'(?<![\d.,])\d{4}(?![\d.,])')
+        .allMatches(heading)
+        .where((m) {
+          if (dates.any((d) => m.start >= d.start && m.end <= d.end)) {
+            return false;
+          }
+          final between = m.end <= labelMatch.start
+              ? heading.substring(m.end, labelMatch.start)
+              : m.start >= labelMatch.end
+              ? heading.substring(labelMatch.end, m.start)
+              : null;
+          if (between == null || !connector.hasMatch(between)) return false;
+          // An unqualified year adjacent to the word "card" is ambiguous.
+          if (RegExp(r'^(?:19|20)\d{2}$').hasMatch(m.group(0)!) &&
+              between.trim().isEmpty) {
+            return false;
+          }
+          return true;
+        })
+        .toList();
+    if (matches.length != 1) return null;
+    suffixes.add(matches.single.group(0)!);
+  }
+  return foundHeading && suffixes.length == 1 ? suffixes.single : null;
+}
+
 String? _date(String value) {
   final parts = value.split(RegExp(r'[./-]'));
   if (parts.length != 3) return null;
@@ -166,8 +236,6 @@ CalPdfResult? parseCalDocument(List<BankPdfPage> pages) {
   final incomplete = <int>{};
   final transactionPages = <int>{};
   final cardSuffixes = <String>{};
-  String? billingDate;
-  String? cardSuffix;
   for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     final page = pages[pageIndex];
     if (page.text.length != page.rects.length || page.width <= 0) {
@@ -175,19 +243,12 @@ CalPdfResult? parseCalDocument(List<BankPdfPage> pages) {
       continue;
     }
     final text = page.text;
-    final cardLabel = text.indexOf('כרטיס');
-    if (cardLabel >= 0) {
-      final headerEnd = text.indexOf('\n', cardLabel);
-      final header = text.substring(
-        cardLabel,
-        headerEnd < 0 ? text.length : headerEnd,
-      );
-      final match = RegExp(r'(?<!\d)\d{4}(?!\d)').firstMatch(header);
-      if (match != null) {
-        cardSuffix = match.group(0);
-        cardSuffixes.add(cardSuffix!);
-      }
-    }
+    // A continuation page without its own unambiguous heading is deliberately
+    // left unidentified; identity and billing data never carry across pages.
+    final cardSuffix = _cardSuffixOnPage(text);
+    String? billingDate;
+    if (cardSuffix != null) cardSuffixes.add(cardSuffix);
+    final rowCountBeforePage = rows.length;
     final dateMatches = _dates.allMatches(text).toList();
     final amounts = _money.allMatches(text).toList();
     // The charge header contains a billing date near the centre of the page.
@@ -224,7 +285,7 @@ CalPdfResult? parseCalDocument(List<BankPdfPage> pages) {
           incomplete.add(pageIndex + 1);
           continue;
         }
-        billingDate = parsedDate;
+        if (cardSuffix != null) billingDate = parsedDate;
         rows.add({
           'date': parsedDate,
           'description': 'CAL card payment',
@@ -235,6 +296,7 @@ CalPdfResult? parseCalDocument(List<BankPdfPage> pages) {
           'paymentCandidate': true,
           'billingDate': parsedDate,
           'cardSuffix': cardSuffix,
+          'sourcePage': pageIndex + 1,
           'signUncertain': page.fromOcr,
           'ocrDirectionUnverified': page.fromOcr,
         });
@@ -308,11 +370,15 @@ CalPdfResult? parseCalDocument(List<BankPdfPage> pages) {
         'kind': 'transaction',
         'billingDate': billingDate,
         'cardSuffix': cardSuffix,
+        'sourcePage': pageIndex + 1,
         'signUncertain': uncertain || hasSign,
         'classificationUncertain': uncertain || hasSign,
         'ocrDirectionUnverified': page.fromOcr,
       });
       transactionPages.add(pageIndex + 1);
+    }
+    if (cardSuffix == null && rows.length > rowCountBeforePage) {
+      incomplete.add(pageIndex + 1);
     }
   }
   if (rows.where((row) => row['kind'] == 'transaction').isEmpty) {

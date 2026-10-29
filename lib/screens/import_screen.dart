@@ -51,6 +51,7 @@ class _ImportScreenState extends State<ImportScreen> {
   String? selectedCardSuffix;
   bool includePaymentCandidates = false;
   bool unidentifiedCardAcknowledged = false;
+  final Set<int?> includedUnidentifiedCalPages = {};
   int? date, description, amount, debit, credit, currency, category;
   List<Map<String, dynamic>>? drafts;
   List<Map<String, dynamic>> matches = [];
@@ -173,6 +174,7 @@ class _ImportScreenState extends State<ImportScreen> {
         selectedCardSuffix = null;
         includePaymentCandidates = false;
         unidentifiedCardAcknowledged = false;
+        includedUnidentifiedCalPages.clear();
         fileName = file.name;
         date = suggested?.date;
         description = suggested?.description;
@@ -221,7 +223,11 @@ class _ImportScreenState extends State<ImportScreen> {
         setState(() => error = t('Select a card before reviewing.'));
         return;
       }
-      if ((preview!.format == 'pdf:CAL' || preview!.format == 'pdf:MAX') &&
+      if ((preview!.format == 'pdf:MAX' ||
+              (preview!.format == 'pdf:CAL' &&
+                  preview!.providerRows!.every(
+                    (r) => r['sourcePage'] == null,
+                  ))) &&
           preview!.cardSuffixes.isEmpty &&
           !unidentifiedCardAcknowledged) {
         setState(
@@ -234,7 +240,22 @@ class _ImportScreenState extends State<ImportScreen> {
       setState(() {
         drafts = preview!.candidates(accountId: widget.accountId).where((row) {
           final card = row['cardSuffix'];
-          if (selectedCardSuffix != null && card != selectedCardSuffix) {
+          final unidentifiedCal =
+              preview!.format == 'pdf:CAL' &&
+              (card == null || '$card'.trim().isEmpty);
+          if (unidentifiedCal) {
+            final page = row['sourcePage'] is int
+                ? row['sourcePage'] as int
+                : null;
+            final legacyAcknowledged =
+                page == null &&
+                preview!.cardSuffixes.isEmpty &&
+                unidentifiedCardAcknowledged;
+            if (!legacyAcknowledged &&
+                !includedUnidentifiedCalPages.contains(page)) {
+              return false;
+            }
+          } else if (selectedCardSuffix != null && card != selectedCardSuffix) {
             return false;
           }
           return row['paymentCandidate'] != true || includePaymentCandidates;
@@ -552,7 +573,11 @@ class _ImportScreenState extends State<ImportScreen> {
                 ),
               ),
             if (!data.blocked && data.providerRows != null) ...[
-              if ((data.format == 'pdf:CAL' || data.format == 'pdf:MAX') &&
+              if ((data.format == 'pdf:MAX' ||
+                      (data.format == 'pdf:CAL' &&
+                          data.providerRows!.every(
+                            (r) => r['sourcePage'] == null,
+                          ))) &&
                   data.cardSuffixes.isEmpty)
                 CheckboxListTile(
                   value: unidentifiedCardAcknowledged,
@@ -578,13 +603,55 @@ class _ImportScreenState extends State<ImportScreen> {
                   ],
                   onChanged: (card) => setState(() {
                     selectedCardSuffix = card;
+                    includedUnidentifiedCalPages.clear();
                     drafts = null;
                   }),
                 ),
               if (selectedCardSuffix != null)
                 Text(
-                  '${t('Rows for other or unidentified cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
+                  '${t('Rows for other cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != null && row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
                 ),
+              if (data.format == 'pdf:CAL')
+                for (final page
+                    in data.providerRows!
+                        .where(
+                          (row) =>
+                              row['cardSuffix'] == null ||
+                              '${row['cardSuffix']}'.trim().isEmpty,
+                        )
+                        .map(
+                          (row) => row['sourcePage'] is int
+                              ? row['sourcePage'] as int
+                              : null,
+                        )
+                        .toSet())
+                  if (page != null ||
+                      data.cardSuffixes.isNotEmpty ||
+                      data.providerRows!.any((r) => r['sourcePage'] != null))
+                    CheckboxListTile(
+                      value: includedUnidentifiedCalPages.contains(page),
+                      title: Text(
+                        page == null
+                            ? t(
+                                'Include unidentified CAL entries with unknown page for the selected card',
+                              )
+                            : t(
+                                'Include unidentified CAL entries from page {page} for the selected card',
+                              ).replaceAll('{page}', '$page'),
+                      ),
+                      subtitle: Text(
+                        '${t('Unidentified purchases')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] != true).length} • '
+                        '${t('Unidentified payment totals')}: ${data.providerRows!.where((row) => (row['cardSuffix'] == null || '${row['cardSuffix']}'.trim().isEmpty) && row['sourcePage'] == page && row['paymentCandidate'] == true).length}',
+                      ),
+                      onChanged: (value) => setState(() {
+                        if (value == true) {
+                          includedUnidentifiedCalPages.add(page);
+                        } else {
+                          includedUnidentifiedCalPages.remove(page);
+                        }
+                        drafts = null;
+                      }),
+                    ),
               if (data.providerRows!.any(
                 (row) => row['paymentCandidate'] == true,
               ))
@@ -744,7 +811,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     '${row['description']}  •  ${row['amount']} ${row['currency']}',
                   ),
                   subtitle: Text(
-                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['pending'] == true ? '${t('Pending')} • ' : ''}${row['billingDate'] != null ? '${t('Billing date')}: ${'${row['billingDate']}'.split('T').first} • ' : ''}${row['rateSource'] == 'statement' && row['amountIls'] is num ? '${t('Statement ILS amount')}: ${row['amountIls']} • ' : ''}${row['classificationUncertain'] == true ? '${t('Choose transaction type')} • ' : ''}${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
+                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['sourcePage'] is int ? '${t('Page')}: ${row['sourcePage']} • ' : ''}${row['pending'] == true ? '${t('Pending')} • ' : ''}${row['billingDate'] != null ? '${t('Billing date')}: ${'${row['billingDate']}'.split('T').first} • ' : ''}${row['rateSource'] == 'statement' && row['amountIls'] is num ? '${t('Statement ILS amount')}: ${row['amountIls']} • ' : ''}${row['classificationUncertain'] == true ? '${t('Choose transaction type')} • ' : ''}${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
                         ? 'Choose income or expense'
                         : (row['amount'] as num) < 0
                         ? 'Expense'

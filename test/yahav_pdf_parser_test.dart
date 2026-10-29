@@ -37,6 +37,7 @@ BankPdfPage statement({
   bool missingAmount = false,
   bool conflicting = false,
   String firstAmount = '123.45',
+  String secondAmount = '21.25',
 }) {
   final p = SyntheticPage();
   if (pending) {
@@ -65,7 +66,7 @@ BankPdfPage statement({
   p.word('876543', 685, 700);
   p.word('Synthetic income', 600, 700);
   p.word('0', pending ? 324 : 254, 700);
-  p.word('21.25', 185, 700);
+  p.word(secondAmount, 185, 700);
   if (!pending) p.word('10,021.24', 104, 700);
   return p.build(ocr: ocr);
 }
@@ -86,7 +87,37 @@ void main() {
     expect(parsed.rows.map((r) => r['status']), ['actual', 'actual']);
     expect(parsed.rows.first['description'], 'Synthetic expense');
     expect(parsed.rows.first['date'], startsWith('2026-03-01'));
+    expect(parsed.rows.map((r) => r['signUncertain']), [false, false]);
   });
+  test(
+    'negative debit and credit require review without changing column signs',
+    () {
+      for (final pending in [false, true]) {
+        final parsed = parseYahavDocument([
+          statement(
+            pending: pending,
+            firstAmount: '-123.45',
+            secondAmount: '-21.25',
+          ),
+        ])!;
+        expect(parsed.incompletePages, isEmpty);
+        expect(parsed.rows.map((r) => r['amount']), [-123.45, 21.25]);
+        expect(parsed.rows.map((r) => r['amountIls']), [-123.45, 21.25]);
+        expect(parsed.rows.map((r) => r['signUncertain']), [true, true]);
+        expect(parsed.rows.every((r) => r['pending'] == pending), isTrue);
+        expect(
+          parsed.rows.every(
+            (r) => r['status'] == (pending ? 'planned' : 'actual'),
+          ),
+          isTrue,
+        );
+        expect(
+          parsed.rows.every((r) => !r.containsKey('ocrDirectionUnverified')),
+          isTrue,
+        );
+      }
+    },
+  );
   test('separate pending section remains planned despite past dates', () {
     final parsed = parseYahavDocument([statement(), statement(pending: true)])!;
     expect(parsed.rows.length, 4);
@@ -105,6 +136,27 @@ void main() {
     expect(parsed.incompletePages, {1});
     expect(parsed.rows.length, 1);
     expect(parsed.rows.single['signUncertain'], isTrue);
+    expect(parsed.rows.single['ocrDirectionUnverified'], isTrue);
+  });
+  test('OCR requires confirmation for both unsigned and negative columns', () {
+    for (final pending in [false, true]) {
+      for (final negative in [false, true]) {
+        final parsed = parseYahavDocument([
+          statement(
+            pending: pending,
+            ocr: true,
+            firstAmount: negative ? '-123.45' : '123.45',
+            secondAmount: negative ? '-21.25' : '21.25',
+          ),
+        ])!;
+        expect(parsed.rows.map((r) => r['amount']), [-123.45, 21.25]);
+        expect(parsed.rows.every((r) => r['signUncertain'] == true), isTrue);
+        expect(
+          parsed.rows.every((r) => r['ocrDirectionUnverified'] == true),
+          isTrue,
+        );
+      }
+    }
   });
   test('conflicting debit and credit are never guessed', () {
     final parsed = parseYahavDocument([statement(conflicting: true)])!;
