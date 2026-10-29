@@ -140,6 +140,7 @@ class DiaryController extends ChangeNotifier {
         ...entry,
         'recurringSourceId': old!['recurringSourceId'],
         'recurringOffset': old['recurringOffset'],
+        'recurringScheduleDate': old['recurringScheduleDate'],
         'recurringOverridden': true,
       };
     }
@@ -171,10 +172,34 @@ class DiaryController extends ChangeNotifier {
       for (final e in list.where((e) => e['repeatMonthly'] == true))
         '${e['id']}': e,
     };
-    final tombstones = ((_data['deletedRecurringIds'] as List?) ?? [])
+    final sourceCandidates = {for (final e in list) '${e['id']}': e};
+    final legacyTombstones = ((_data['deletedRecurringIds'] as List?) ?? [])
+        .map((id) => '$id')
+        .toSet();
+    final tombstones = ((_data['deletedRecurringSchedules'] as List?) ?? [])
         .map((id) => '$id')
         .toSet();
     var changed = false;
+    // Bind old offset-only deletions to the source date before any source
+    // edit. Unmatched legacy deletions stay intact until their source returns.
+    for (final source in sourceCandidates.values) {
+      final date = DateTime.tryParse('${source['date']}');
+      if (date == null) continue;
+      final schedule = _scheduleDate(date);
+      final prefix = '${source['id']}:';
+      for (final id in legacyTombstones.toList()) {
+        if (!id.startsWith(prefix)) continue;
+        final offset = int.tryParse(id.substring(prefix.length));
+        if (offset == null || offset < 1) continue;
+        tombstones.add(_occurrenceId('${source['id']}', offset, schedule));
+        legacyTombstones.remove(id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      _data['deletedRecurringIds'] = legacyTombstones.toList();
+      _data['deletedRecurringSchedules'] = tombstones.toList();
+    }
     // Old versions generated "source:offset" rows without provenance; they
     // might have been edited, so adopt them only as overrides, never overwrite.
     for (final row in list) {
@@ -189,6 +214,35 @@ class DiaryController extends ChangeNotifier {
         row['recurringOverridden'] = true;
         changed = true;
         break;
+      }
+    }
+    // Children created before schedule provenance existed retain their IDs
+    // and links, and are associated with the current source schedule.
+    for (final row in list) {
+      if (row['recurringSourceId'] != null &&
+          row['recurringOverridden'] == null) {
+        row['recurringOverridden'] = true;
+        changed = true;
+      }
+      if (row['recurringSourceId'] == null ||
+          row['recurringScheduleDate'] != null) {
+        continue;
+      }
+      final source = sourceCandidates['${row['recurringSourceId']}'];
+      final date = DateTime.tryParse('${source?['date']}');
+      if (date != null) {
+        row['recurringScheduleDate'] = _scheduleDate(date);
+        changed = true;
+      }
+    }
+    final occurrenceIds = <String, String>{};
+    for (final row in list) {
+      final sourceId = row['recurringSourceId'];
+      final offset = row['recurringOffset'];
+      final schedule = row['recurringScheduleDate'];
+      if (sourceId != null && offset is int && schedule is String) {
+        occurrenceIds[_occurrenceId('$sourceId', offset, schedule)] =
+            '${row['id']}';
       }
     }
     final expected = <String, Map<String, dynamic>>{};
@@ -207,8 +261,10 @@ class DiaryController extends ChangeNotifier {
           date.day > lastDay ? lastDay : date.day,
         );
         if (next.isBefore(start) || next.isAfter(end)) continue;
-        final id = '${source['id']}:$i';
-        if (tombstones.contains(id)) continue;
+        final schedule = _scheduleDate(date);
+        final key = _occurrenceId('${source['id']}', i, schedule);
+        if (tombstones.contains(key)) continue;
+        final id = occurrenceIds[key] ?? key;
         expected[id] = {
           ...source,
           'id': id,
@@ -218,6 +274,7 @@ class DiaryController extends ChangeNotifier {
           'linkedIds': <String>[],
           'recurringSourceId': '${source['id']}',
           'recurringOffset': i,
+          'recurringScheduleDate': schedule,
           'recurringOverridden': false,
         };
       }
@@ -235,6 +292,7 @@ class DiaryController extends ChangeNotifier {
       if (!active && (row['recurringOverridden'] == true || !isFuture)) {
         row.remove('recurringSourceId');
         row.remove('recurringOffset');
+        row.remove('recurringScheduleDate');
         row.remove('recurringOverridden');
         changed = true;
       } else if (row['recurringOverridden'] != true && isFuture) {
@@ -274,6 +332,31 @@ class DiaryController extends ChangeNotifier {
     return changed;
   }
 
+  static String _scheduleDate(DateTime date) => DateTime(
+    date.year,
+    date.month,
+    date.day,
+  ).toIso8601String().substring(0, 10);
+
+  static String _occurrenceId(String sourceId, int offset, String schedule) =>
+      '$sourceId:$offset@$schedule';
+
+  /// Keep deletions scoped to the schedule that generated each occurrence.
+  void _recordRecurringDeletions(Iterable<Map<String, dynamic>> rows) {
+    final tombstones = ((_data['deletedRecurringSchedules'] as List?) ?? [])
+        .map((id) => '$id')
+        .toSet();
+    for (final row in rows) {
+      final sourceId = row['recurringSourceId'];
+      final offset = row['recurringOffset'];
+      final schedule = row['recurringScheduleDate'];
+      if (sourceId != null && offset is int && schedule is String) {
+        tombstones.add(_occurrenceId('$sourceId', offset, schedule));
+      }
+    }
+    _data['deletedRecurringSchedules'] = tombstones.toList();
+  }
+
   Future<void> importEntries(List<Map<String, dynamic>> imported) async {
     _assertEditable();
     final list = entries;
@@ -296,17 +379,9 @@ class DiaryController extends ChangeNotifier {
     if (ids.isEmpty) return;
     _extendRecurring();
     final list = entries;
-    final recurringSources = list
-        .where((e) => e['repeatMonthly'] == true)
-        .map((e) => '${e['id']}:')
-        .toList();
-    final deletedRecurringIds = ((_data['deletedRecurringIds'] as List?) ?? [])
-        .map((id) => '$id')
-        .toSet();
-    deletedRecurringIds.addAll(
-      ids.where((id) => recurringSources.any(id.startsWith)),
+    _recordRecurringDeletions(
+      list.where((row) => ids.contains('${row['id']}')),
     );
-    _data['deletedRecurringIds'] = deletedRecurringIds.toList();
     list.removeWhere((e) => ids.contains('${e['id']}'));
     for (final entry in list) {
       entry['linkedIds'] = (entry['linkedIds'] as List? ?? [])
@@ -348,6 +423,9 @@ class DiaryController extends ChangeNotifier {
         .where((e) => e['accountId'] == id)
         .map((e) => '${e['id']}')
         .toSet();
+    _recordRecurringDeletions(
+      list.where((row) => removed.contains('${row['id']}')),
+    );
     list.removeWhere((e) => removed.contains('${e['id']}'));
     for (final entry in list) {
       entry['linkedIds'] = (entry['linkedIds'] as List? ?? [])
@@ -372,7 +450,12 @@ class DiaryController extends ChangeNotifier {
       if (entry['id'] == first || entry['id'] == second) {
         final links = List<dynamic>.from(entry['linkedIds'] as List? ?? []);
         final other = entry['id'] == first ? second : first;
-        if (!links.contains(other)) links.add(other);
+        if (!links.contains(other)) {
+          links.add(other);
+          if (entry['recurringSourceId'] != null) {
+            entry['recurringOverridden'] = true;
+          }
+        }
         entry['linkedIds'] = links;
       }
     }
@@ -386,9 +469,12 @@ class DiaryController extends ChangeNotifier {
     for (final entry in list) {
       if (entry['id'] == first || entry['id'] == second) {
         final other = entry['id'] == first ? second : first;
-        entry['linkedIds'] = (entry['linkedIds'] as List? ?? [])
-            .where((id) => id != other)
-            .toList();
+        final links = List<dynamic>.from(entry['linkedIds'] as List? ?? []);
+        if (links.contains(other) && entry['recurringSourceId'] != null) {
+          entry['recurringOverridden'] = true;
+        }
+        links.removeWhere((id) => id == other);
+        entry['linkedIds'] = links;
       }
     }
     _data['entries'] = list;

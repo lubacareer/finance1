@@ -11,11 +11,13 @@ class BankPdfPage {
     required this.rects,
     required this.width,
     required this.height,
+    this.fromOcr = false,
   });
   final String text;
   final List<PdfRect> rects;
   final double width;
   final double height;
+  final bool fromOcr;
 }
 
 class BankPdfResult {
@@ -24,11 +26,23 @@ class BankPdfResult {
     required this.rows,
     required this.incompleteCount,
     required this.mixedProviders,
+    this.uncertainRows = const {},
+    this.incompletePages = const {},
+    this.transactionPages = const {},
   });
   final String provider;
   final List<List<String>> rows;
   final int incompleteCount;
   final bool mixedProviders;
+
+  /// Indices into [rows] whose direction must be confirmed by the user.
+  final Set<int> uncertainRows;
+
+  /// One-based page numbers with missing or incomplete rows.
+  final Set<int> incompletePages;
+
+  /// One-based page numbers with at least one complete bank transaction.
+  final Set<int> transactionPages;
 }
 
 class _Header {
@@ -53,7 +67,10 @@ class _MatchPosition {
 
 final _dates = RegExp(r'\b\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})\b');
 final _amounts = RegExp(
-  r'(?:₪\s*)?[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2}|,\d{2})',
+  r'(?<![\d.,])(?:₪\s*)?[+\-−]?(?:\d{1,3}(?:[ ,.\u00a0]\d{3})+|\d+)[.,]\d{2}(?![\d.,])',
+);
+final _validAmount = RegExp(
+  r'^(?:₪\s*)?[+\-−]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}|(?:\d+|\d{1,3}(?:\.\d{3})+),\d{2}|\d{1,3}(?:[ \u00a0]\d{3})+[.,]\d{2})$',
 );
 
 List<_MatchPosition> _positions(BankPdfPage page, RegExp expression) {
@@ -137,9 +154,21 @@ _Header? _header(BankPdfPage page) {
 /// Recognize Leumi and Beinleumi statement tables independently. Unknown
 /// templates return null so callers can use generic extraction; mixed detected
 /// providers are blocked rather than silently combined into one account.
-BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
-  final headers = pages.map(_header).toList();
-  final recognized = headers.whereType<_Header>().toList();
+BankPdfResult? parseBankDocument(
+  List<BankPdfPage> pages, {
+  List<BankPdfPage>? headerPages,
+}) {
+  final detected = pages.map(_header).toList();
+  final fallback = headerPages?.map(_header).toList();
+  final headers = [
+    for (var i = 0; i < pages.length; i++)
+      detected[i] ??
+          (fallback != null && i < fallback.length ? fallback[i] : null),
+  ];
+  final recognized = [
+    ...detected.whereType<_Header>(),
+    ...?fallback?.whereType<_Header>(),
+  ];
   if (recognized.isEmpty) return null;
   final provider = recognized.first.provider;
   if (recognized.any((header) => header.provider != provider)) {
@@ -154,6 +183,9 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
     ['Date', 'Description', 'Debit', 'Credit'],
   ];
   var incomplete = 0;
+  final incompletePages = <int>{};
+  final uncertainRows = <int>{};
+  final transactionPages = <int>{};
   _Header? active;
   for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     final page = pages[pageIndex];
@@ -165,6 +197,7 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
         page.text.length != page.rects.length ||
         (page.width - header.width).abs() > header.width * .02) {
       incomplete++;
+      incompletePages.add(pageIndex + 1);
       continue;
     }
     final anchors = _positions(page, _dates)
@@ -174,7 +207,10 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
               (local == null || p.y < local.top - 3),
         )
         .toList();
-    if (anchors.isEmpty && page.text.trim().isNotEmpty) incomplete++;
+    if (anchors.isEmpty && page.text.trim().isNotEmpty) {
+      incomplete++;
+      incompletePages.add(pageIndex + 1);
+    }
     final money = _positions(page, _amounts);
     final dateMatches = _positions(page, _dates);
     for (var i = 0; i < anchors.length; i++) {
@@ -184,6 +220,7 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
       final end = next?.match.start ?? page.text.length;
       if (end <= date.match.end) {
         incomplete++;
+        incompletePages.add(pageIndex + 1);
         continue;
       }
       final moneyHere = money
@@ -196,6 +233,7 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
           )
           .toList();
       final debit = <String>[], credit = <String>[];
+      var invalidAmount = false;
       for (final amount in moneyHere) {
         final d = (amount.right - header.debit).abs(),
             c = (amount.right - header.credit).abs(),
@@ -203,6 +241,49 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
         final closest = math.min(d, math.min(c, b));
         if (closest > page.width * .045 || closest == b) continue;
         final value = amount.match.group(0)!.trim();
+        // A malformed group must not be accepted by matching only its suffix
+        // (for example, the "34,56" in "12 34,56"). A separated numeric
+        // prefix is ambiguous, so leave this row for manual review.
+        final preceding = page.text.substring(
+          date.match.end,
+          amount.match.start,
+        );
+        final prefix = RegExp(r'[\d.,][ \u00a0]+$').firstMatch(preceding);
+        final previousRect = prefix == null
+            ? PdfRect.empty
+            : page.rects[date.match.end + prefix.start];
+        final gap = math.min(
+          (previousRect.right - amount.left).abs(),
+          (amount.right - previousRect.left).abs(),
+        );
+        final partialGroup =
+            !value.startsWith('₪') &&
+            previousRect.isNotEmpty &&
+            (previousRect.top - amount.y).abs() < 4 &&
+            gap < page.width * .018;
+        var crossesColumns = false;
+        for (final whitespace in RegExp(
+          r'[ \u00a0]+',
+        ).allMatches(amount.match.group(0)!)) {
+          final before = amount.match.start + whitespace.start - 1;
+          final after = amount.match.start + whitespace.end;
+          if (before < amount.match.start || after >= amount.match.end) {
+            continue;
+          }
+          final a = page.rects[before], b = page.rects[after];
+          if (a.isEmpty || b.isEmpty) continue;
+          final distance = math.min(
+            (a.right - b.left).abs(),
+            (b.right - a.left).abs(),
+          );
+          if ((a.top - b.top).abs() > 4 || distance > page.width * .018) {
+            crossesColumns = true;
+          }
+        }
+        if (partialGroup || crossesColumns || !_validAmount.hasMatch(value)) {
+          invalidAmount = true;
+          continue;
+        }
         if (closest == d) {
           debit.add(value);
         } else {
@@ -234,8 +315,9 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
           .toString()
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      if (label.isEmpty || debit.length + credit.length != 1) {
+      if (invalidAmount || label.isEmpty || debit.length + credit.length != 1) {
         incomplete++;
+        incompletePages.add(pageIndex + 1);
         continue;
       }
       rows.add([
@@ -244,6 +326,8 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
         debit.isEmpty ? '' : debit.single,
         credit.isEmpty ? '' : credit.single,
       ]);
+      if (page.fromOcr) uncertainRows.add(rows.length - 1);
+      transactionPages.add(pageIndex + 1);
     }
   }
   return BankPdfResult(
@@ -251,5 +335,8 @@ BankPdfResult? parseBankDocument(List<BankPdfPage> pages) {
     rows: rows,
     incompleteCount: incomplete,
     mixedProviders: false,
+    uncertainRows: uncertainRows,
+    incompletePages: incompletePages,
+    transactionPages: transactionPages,
   );
 }

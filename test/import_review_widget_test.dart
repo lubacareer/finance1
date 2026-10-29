@@ -70,6 +70,147 @@ class _DelayedPicker extends _FixturePicker {
 }
 
 void main() {
+  testWidgets(
+    'OCR direction requires selection even after editing a signed row',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final originalPicker = FilePickerPlatform.instance;
+      FilePickerPlatform.instance = _FixturePicker();
+      addTearDown(() => FilePickerPlatform.instance = originalPicker);
+      List<Map<String, dynamic>>? saved;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImportScreen(
+            accountId: 'bank',
+            tr: (s) => s,
+            onSave: (rows) async {
+              saved = rows;
+            },
+            parseFile: (_, _) async => ImportPreview(
+              format: 'pdf:Leumi',
+              warnings: [],
+              rows: [
+                ['Date', 'Description', 'Debit', 'Credit'],
+                ['01/10/2026', 'OCR shop', '12.50', ''],
+              ],
+              uncertainRows: {1},
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Prepare review'));
+      await tester.tap(find.text('Prepare review'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('OCR shop').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(1), 'OCR shop edited');
+      await tester.tap(find.text('Save').last);
+      await tester.pumpAndSettle();
+      final confirm = find.widgetWithText(FilledButton, 'Confirm import');
+      await tester.ensureVisible(confirm);
+      expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+      await tester.tap(find.byTooltip('Choose income or expense'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Expense').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(confirm);
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+      expect(saved?.single['amount'], -12.5);
+      expect(saved?.single['signUncertain'], isFalse);
+    },
+  );
+  for (final sample in [
+    ('-12.50', '20.50', -20.5),
+    ('+12.50', '20.50', 20.5),
+    ('12.50', '₪ -20.50', -20.5),
+  ]) {
+    testWidgets(
+      'review editing ${sample.$1} as ${sample.$2} preserves direction',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 2400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final originalPicker = FilePickerPlatform.instance;
+        FilePickerPlatform.instance = _FixturePicker(
+          _FixtureFile(
+            'Date,Description,Amount\n01/10/2026,Shop,${sample.$1}\n',
+          ),
+        );
+        addTearDown(() => FilePickerPlatform.instance = originalPicker);
+        List<Map<String, dynamic>>? saved;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportScreen(
+              accountId: 'bank',
+              tr: (s) => s,
+              onSave: (rows) async => saved = rows,
+            ),
+          ),
+        );
+        await tester.tap(find.text('Choose a file'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Prepare review'));
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.textContaining('Shop').first);
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).at(2), sample.$2);
+        await tester.tap(find.text('Save').last);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Confirm import'));
+        await tester.tap(find.text('Confirm import'));
+        await tester.pumpAndSettle();
+        expect(saved?.single['amount'], sample.$3);
+      },
+    );
+  }
+
+  testWidgets(
+    'unsigned added bank transaction requires direction confirmation',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final originalPicker = FilePickerPlatform.instance;
+      FilePickerPlatform.instance = _FixturePicker(
+        _FixtureFile('Date,Description,Amount\n01/10/2026,Shop,-12.50\n'),
+      );
+      addTearDown(() => FilePickerPlatform.instance = originalPicker);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImportScreen(
+            accountId: 'bank',
+            tr: (s) => s,
+            onSave: (_) async {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Prepare review'));
+      await tester.tap(find.text('Prepare review'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Add missing transaction'));
+      await tester.tap(find.text('Add missing transaction'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(1), 'Missing');
+      await tester.enterText(find.byType(TextField).at(2), '21.50');
+      await tester.tap(find.text('Save').last);
+      await tester.pumpAndSettle();
+      final confirm = find.widgetWithText(FilledButton, 'Confirm import');
+      await tester.ensureVisible(confirm);
+      expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+      expect(find.textContaining('Choose income or expense'), findsWidgets);
+    },
+  );
   testWidgets('detected bank is labeled, and mixed PDFs cannot be mapped', (
     tester,
   ) async {

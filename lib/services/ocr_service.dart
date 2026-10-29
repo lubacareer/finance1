@@ -4,12 +4,91 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tesseract_ocr/flutter_tesseract_ocr.dart';
+import 'package:html/parser.dart' as html;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import 'ocr_integrity.dart';
+import 'bank_pdf_parser.dart';
 
 export 'ocr_integrity.dart' show OcrUnavailableException;
+
+/// Turn Tesseract's pixel-space hOCR boxes into PDF-space character geometry.
+/// Keep physical rows in top-to-bottom, right-to-left order for bank tables.
+@visibleForTesting
+BankPdfPage positionedOcrPage(
+  String hocr,
+  double width,
+  double height,
+  int imageWidth,
+  int imageHeight,
+) {
+  final document = html.parse(hocr);
+  final found = <_OcrWord>[];
+  final box = RegExp(r'\bbbox\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)');
+  for (final line in document.querySelectorAll('.ocr_line, .ocrx_line')) {
+    final words = <_OcrWord>[];
+    for (final word in line.querySelectorAll('.ocrx_word, .ocr_word')) {
+      final match = box.firstMatch(word.attributes['title'] ?? '');
+      final value = word.text.trim();
+      if (match == null || value.isEmpty) continue;
+      final x1 = int.parse(match[1]!);
+      final y1 = int.parse(match[2]!);
+      final x2 = int.parse(match[3]!);
+      final y2 = int.parse(match[4]!);
+      if (x1 >= x2 || y1 >= y2 || x2 > imageWidth || y2 > imageHeight) continue;
+      words.add(_OcrWord(value, x1, y1, x2, y2));
+    }
+    found.addAll(words);
+  }
+  found.sort((a, b) => a.y1.compareTo(b.y1));
+  final lines = <List<_OcrWord>>[];
+  for (final word in found) {
+    // Different OCR line elements may describe columns of the same visual
+    // row. Merge only near-aligned tops, never entire overlapping paragraphs.
+    if (lines.isEmpty ||
+        (word.y1 - lines.last.first.y1) * height / imageHeight > 3.5) {
+      lines.add([word]);
+    } else {
+      lines.last.add(word);
+    }
+  }
+  for (final line in lines) {
+    line.sort((a, b) => b.x2.compareTo(a.x2));
+  }
+  final text = StringBuffer();
+  final rects = <PdfRect>[];
+  for (final words in lines) {
+    for (final word in words) {
+      final rect = PdfRect(
+        word.x1 * width / imageWidth,
+        height - word.y1 * height / imageHeight,
+        word.x2 * width / imageWidth,
+        height - word.y2 * height / imageHeight,
+      );
+      text.write(word.text);
+      // Dart strings and PDF text geometry use UTF-16 code units.
+      rects.addAll(List.filled(word.text.length, rect));
+      text.write(' ');
+      rects.add(PdfRect.empty);
+    }
+    text.writeln();
+    rects.add(PdfRect.empty);
+  }
+  return BankPdfPage(
+    text: text.toString(),
+    rects: rects,
+    width: width,
+    height: height,
+    fromOcr: true,
+  );
+}
+
+class _OcrWord {
+  const _OcrWord(this.text, this.x1, this.y1, this.x2, this.y2);
+  final String text;
+  final int x1, y1, x2, y2;
+}
 
 /// Local OCR for image-only PDF pages. No document content is sent to a server.
 /// Windows uses only the integrity-checked bundled engine. Android uses the
@@ -109,6 +188,27 @@ class OcrService {
   /// Returns null if unavailable or if recognition fails; caller must warn and
   /// let the user enter missing items manually. Recognized text needs review.
   Future<String?> recognize(PdfPage page) async {
+    return (await _recognize(page, positioned: false))?.$1;
+  }
+
+  /// Recognize a scanned page with word positions; callers must review all
+  /// extracted amounts and directions before saving.
+  Future<BankPdfPage?> recognizeWithPositions(PdfPage page) async {
+    final result = await _recognize(page, positioned: true);
+    if (result == null || result.$1.trim().isEmpty) return null;
+    return positionedOcrPage(
+      result.$1,
+      page.width,
+      page.height,
+      result.$2,
+      result.$3,
+    );
+  }
+
+  Future<(String, int, int)?> _recognize(
+    PdfPage page, {
+    required bool positioned,
+  }) async {
     if (!Platform.isAndroid && !Platform.isWindows) return null;
     final exe = Platform.isWindows ? await _windowsExecutable() : null;
     if (Platform.isWindows && exe == null) {
@@ -141,11 +241,20 @@ class OcrService {
         flush: true,
       );
       if (Platform.isAndroid) {
-        return await FlutterTesseractOcr.extractText(
+        if (positioned) {
+          final result = await FlutterTesseractOcr.extractHocr(
+            input.path,
+            language: 'heb+eng+rus',
+            args: {'psm': '6', 'preserve_interword_spaces': '1'},
+          );
+          return (result, image.width, image.height);
+        }
+        final result = await FlutterTesseractOcr.extractText(
           input.path,
           language: 'heb+eng+rus',
           args: {'psm': '6', 'preserve_interword_spaces': '1'},
         );
+        return (result, image.width, image.height);
       }
       final models = await _modelsDirectory();
       final engine = File(exe!);
@@ -153,7 +262,7 @@ class OcrService {
         for (final name in OcrIntegrity.modelHashes.keys)
           File('${models.path}${Platform.pathSeparator}$name.traineddata'),
       ];
-      return await OcrIntegrity.withLockedFiles(
+      final result = await OcrIntegrity.withLockedFiles(
         [engine, ...modelFiles],
         () async {
           if (!await OcrIntegrity.matchesFile(
@@ -179,9 +288,12 @@ class OcrService {
             'heb+eng+rus',
             '--psm',
             '6',
+            if (positioned) ...['-c', 'tessedit_create_hocr=1'],
           ]);
         },
       );
+      if (result == null) return null;
+      return (result, image.width, image.height);
     } on OcrUnavailableException {
       rethrow;
     } on Exception {

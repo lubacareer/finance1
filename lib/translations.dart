@@ -1,5 +1,7 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'The sign conflicts with the selected direction':
+        'הסימן אינו תואם את סוג התנועה שנבחר',
     'Choose a diary': 'בחירת יומן',
     'Two different encrypted diaries were found. Choose the one to open; neither file will be changed by this choice.': 'נמצאו שני יומנים מוצפנים שונים. בחרו איזה מהם לפתוח; בחירה זו אינה משנה אף אחד מהקבצים.',
     'Original diary': 'היומן המקורי',
@@ -101,6 +103,8 @@ const Map<String, Map<String, String>> translations = {
     'Add manual rate': 'הוספת שער ידני',
     'Currency code': 'קוד מטבע',
     'Rate in ILS': 'שער בשקלים',
+    'Use a decimal point or comma, without grouping':
+        'יש להשתמש בנקודה או פסיק עשרוניים, ללא הפרדת אלפים',
     'Create your private diary': 'יצירת יומן פרטי',
     'Unlock your diary': 'פתיחת היומן',
     'Your data stays on this device, encrypted with your passcode.':
@@ -221,6 +225,8 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'The sign conflicts with the selected direction':
+        'Знак суммы не соответствует выбранному типу операции',
     'Choose a diary': 'Выберите дневник',
     'Two different encrypted diaries were found. Choose the one to open; neither file will be changed by this choice.': 'Найдены два разных зашифрованных дневника. Выберите, какой открыть; ни один файл не будет изменён этим выбором.',
     'Original diary': 'Исходный дневник',
@@ -321,6 +327,7 @@ const Map<String, Map<String, String>> translations = {
     'Add manual rate': 'Ввести курс вручную',
     'Currency code': 'Код валюты',
     'Rate in ILS': 'Курс в шекелях',
+    'Use a decimal point or comma, without grouping': 'Используйте точку или запятую для десятичных знаков, без разделения разрядов',
     'Create your private diary': 'Создать личный дневник',
     'Unlock your diary': 'Открыть дневник',
     'Your data stays on this device, encrypted with your passcode.':

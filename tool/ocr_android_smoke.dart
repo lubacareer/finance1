@@ -141,6 +141,12 @@ Future<void> main() async {
           !pdfText.contains('123')) {
         throw StateError('Scanned PDF recognition failed');
       }
+      final positioned = await OcrService().recognizeWithPositions(page);
+      if (positioned == null ||
+          !positioned.text.toUpperCase().contains('TOTAL') ||
+          !positioned.rects.any((rect) => rect.isNotEmpty)) {
+        throw StateError('Scanned PDF position recognition failed');
+      }
     } finally {
       await document.dispose();
     }

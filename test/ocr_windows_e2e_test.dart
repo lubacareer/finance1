@@ -75,6 +75,10 @@ void main() {
           final recognized = await service.recognize(page);
           expect(recognized?.toUpperCase(), contains('TOTAL'));
           expect(recognized, contains('123'));
+          final positioned = await service.recognizeWithPositions(page);
+          expect(positioned, isNotNull);
+          expect(positioned!.text.toUpperCase(), contains('TOTAL'));
+          expect(positioned.rects.any((rect) => rect.isNotEmpty), isTrue);
           await File('${modelDir.path}/eng.traineddata')
               .writeAsString('altered');
           await expectLater(
@@ -83,7 +87,8 @@ void main() {
           );
           File('assets/tessdata/eng.traineddata')
               .copySync('${modelDir.path}/eng.traineddata');
-          await File('${engineDir.path}/tesseract.exe').writeAsString('altered');
+          await File('${engineDir.path}/tesseract.exe')
+              .writeAsString('altered');
           await expectLater(
             service.recognize(page),
             throwsA(isA<OcrUnavailableException>()),

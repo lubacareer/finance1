@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/currency.dart';
 import '../services/import_service.dart';
+import '../services/manual_numbers.dart';
 
 typedef Translate = String Function(String);
 
@@ -306,8 +307,18 @@ class _EntryEditorState extends State<_EntryEditor> {
                     decimal: true,
                   ),
                   decoration: InputDecoration(labelText: t('Amount')),
-                  validator: (v) =>
-                      !_validNumber(v) ? t('Enter a valid number') : null,
+                  validator: (v) {
+                    if (!_validNumber(v)) return t('Enter a valid number');
+                    final value = parseStatementAmount(v!)!;
+                    if (hasExplicitAmountSign(v) &&
+                        value != 0 &&
+                        ((value < 0) != (_direction == 'expense'))) {
+                      return t(
+                        'The sign conflicts with the selected direction',
+                      );
+                    }
+                    return null;
+                  },
                 ),
                 TextFormField(
                   controller: _currency,
@@ -326,9 +337,14 @@ class _EntryEditorState extends State<_EntryEditor> {
                   ),
                   decoration: InputDecoration(
                     labelText: t('Converted ILS amount (optional)'),
+                    helperText: t(
+                      'Use a decimal point or comma, without grouping',
+                    ),
                   ),
                   validator: (v) =>
-                      v != null && v.trim().isNotEmpty && !_validNumber(v)
+                      v != null &&
+                          v.trim().isNotEmpty &&
+                          parseManualDecimal(v) == null
                       ? t('Enter a valid number')
                       : null,
                 ),
@@ -388,7 +404,7 @@ class _EntryEditorState extends State<_EntryEditor> {
             final magnitude = parseStatementAmount(_amount.text)!.abs();
             final amount = _direction == 'expense' ? -magnitude : magnitude;
             final currency = normalizeCurrency(_currency.text)!;
-            final convertedMagnitude = parseStatementAmount(_amountIls.text)
+            final convertedMagnitude = parseManualDecimal(_amountIls.text)
                 ?.abs();
             var convertedAmount = convertedMagnitude == null
                 ? null

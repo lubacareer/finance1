@@ -12,7 +12,7 @@ import 'screens/forecast_screen.dart';
 import 'screens/import_screen.dart';
 import 'services/diary_controller.dart';
 import 'services/insights.dart';
-import 'services/import_service.dart' show parseStatementAmount;
+import 'services/manual_numbers.dart';
 import 'services/ocr_service.dart';
 import 'services/vault.dart';
 import 'translations.dart';
@@ -1606,7 +1606,12 @@ class _HomeState extends State<Home> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
-                decoration: InputDecoration(labelText: t('Rate in ILS')),
+                decoration: InputDecoration(
+                  labelText: t('Rate in ILS'),
+                  helperText: t(
+                    'Use a decimal point or comma, without grouping',
+                  ),
+                ),
               ),
               ListTile(
                 title: Text(t('Date')),
@@ -1638,7 +1643,7 @@ class _HomeState extends State<Home> {
       ),
     );
     final code = currency.text.trim().toUpperCase(),
-        rate = parseStatementAmount(value.text);
+        rate = parseManualDecimal(value.text);
     currency.dispose();
     value.dispose();
     if (result == true &&

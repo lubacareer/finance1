@@ -276,11 +276,21 @@ void main() {
         'User edit',
       );
       expect(
-        diary.entries.firstWhere((e) => e['id'] == unedited['id'])['amount'],
+        diary.entries.firstWhere(
+          (e) =>
+              e['recurringSourceId'] == 'source' &&
+              e['recurringOffset'] == unedited['recurringOffset'] &&
+              e['recurringScheduleDate'] != unedited['recurringScheduleDate'],
+        )['amount'],
         -55.0,
       );
       expect(
-        diary.entries.firstWhere((e) => e['id'] == unedited['id'])['date'],
+        diary.entries.firstWhere(
+          (e) =>
+              e['recurringSourceId'] == 'source' &&
+              e['recurringOffset'] == unedited['recurringOffset'] &&
+              e['recurringScheduleDate'] != unedited['recurringScheduleDate'],
+        )['date'],
         endsWith('-02'),
       );
       await diary.putEntry({...source, 'repeatMonthly': false});
@@ -295,6 +305,149 @@ void main() {
       expect(diary.entries.any((e) => e['id'] == overridden['id']), isTrue);
     },
   );
+
+  test('deletions and overrides follow the source schedule', () async {
+    final now = DateTime.now();
+    final date = DateTime(
+      now.year,
+      now.month - 1,
+      1,
+    ).toIso8601String().substring(0, 10);
+    final movedDate = DateTime(
+      now.year,
+      now.month - 1,
+      2,
+    ).toIso8601String().substring(0, 10);
+    final source = {
+      ...entry('schedule', 'a', 'transaction'),
+      'date': date,
+      'repeatMonthly': true,
+    };
+    await diary.putEntry(source);
+    final children = diary.entries
+        .where((e) => e['recurringSourceId'] == 'schedule')
+        .toList();
+    final deleted = children.first;
+    final unedited = children[1];
+    final edited = children.last;
+    await diary.deleteEntry('${deleted['id']}');
+    await diary.putEntry({...edited, 'description': 'Override'});
+    await diary.putEntry({...source, 'amount': -80.0});
+    expect(diary.entries.any((e) => e['id'] == deleted['id']), isFalse);
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == unedited['id'])['amount'],
+      -80.0,
+    );
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == edited['id'])['amount'],
+      -42.0,
+    );
+    await diary.putEntry({...source, 'date': movedDate});
+    expect(
+      diary.entries.any(
+        (e) => e['id'] == edited['id'] && e['description'] == 'Override',
+      ),
+      isTrue,
+    );
+    expect(
+      diary.entries.any(
+        (e) =>
+            e['recurringSourceId'] == 'schedule' &&
+            e['recurringOffset'] == deleted['recurringOffset'] &&
+            e['recurringScheduleDate'] == movedDate,
+      ),
+      isTrue,
+    );
+    expect(
+      diary.entries.any(
+        (e) =>
+            e['recurringSourceId'] == 'schedule' &&
+            e['recurringOffset'] == edited['recurringOffset'] &&
+            e['recurringScheduleDate'] == movedDate,
+      ),
+      isTrue,
+    );
+    await diary.putEntry(source);
+    expect(diary.entries.any((e) => e['id'] == deleted['id']), isFalse);
+    await diary.lock();
+    await diary.unlock('synthetic-passphrase');
+    expect(diary.entries.any((e) => e['id'] == deleted['id']), isFalse);
+  });
+
+  test('account deletion remembers a moved recurring occurrence', () async {
+    final now = DateTime.now();
+    await diary.putAccount({'id': 'a', 'name': 'A', 'type': 'bank'});
+    await diary.putAccount({'id': 'b', 'name': 'B', 'type': 'bank'});
+    await diary.putEntry({
+      ...entry('source-moved', 'a', 'transaction'),
+      'date': DateTime(
+        now.year,
+        now.month - 1,
+        1,
+      ).toIso8601String().substring(0, 10),
+      'repeatMonthly': true,
+    });
+    final child = diary.entries.firstWhere(
+      (e) => e['recurringSourceId'] == 'source-moved',
+    );
+    await diary.putEntry({...child, 'accountId': 'b'});
+    await diary.deleteAccount('b');
+    expect(diary.entries.any((e) => e['id'] == child['id']), isFalse);
+    await diary.lock();
+    await diary.unlock('synthetic-passphrase');
+    expect(diary.entries.any((e) => e['id'] == child['id']), isFalse);
+  });
+
+  test('legacy deletion remains scoped to its original source date', () async {
+    final now = DateTime.now();
+    final date = DateTime(
+      now.year,
+      now.month - 1,
+      1,
+    ).toIso8601String().substring(0, 10);
+    final changedDate = DateTime(
+      now.year,
+      now.month - 1,
+      2,
+    ).toIso8601String().substring(0, 10);
+    final source = {
+      ...entry('old', 'a', 'transaction'),
+      'date': date,
+      'repeatMonthly': true,
+    };
+    // Offset two always falls in the forecast window for this source.
+    final legacyVault = Vault(File('${temp.path}/old-tombstone.vault'));
+    await legacyVault.create('synthetic-passphrase', {
+      'version': 1,
+      'accounts': [],
+      'entries': [source],
+      'deletedRecurringIds': ['old:2'],
+    });
+    final legacy = DiaryController(legacyVault);
+    await legacy.unlock('synthetic-passphrase');
+    expect(
+      legacy.entries.any(
+        (e) => e['recurringSourceId'] == 'old' && e['recurringOffset'] == 2,
+      ),
+      isFalse,
+    );
+    await legacy.putEntry({...source, 'date': changedDate});
+    expect(
+      legacy.entries.any(
+        (e) => e['recurringSourceId'] == 'old' && e['recurringOffset'] == 2,
+      ),
+      isTrue,
+    );
+    await legacy.putEntry(source);
+    expect(
+      legacy.entries.any(
+        (e) => e['recurringSourceId'] == 'old' && e['recurringOffset'] == 2,
+      ),
+      isFalse,
+    );
+    legacy.dispose();
+    legacyVault.lock();
+  });
 
   test('legacy recurring children are preserved as overrides', () async {
     final now = DateTime.now();
@@ -324,6 +477,17 @@ void main() {
           ).toIso8601String().substring(0, 10),
           'description': 'Possibly edited',
         },
+        {
+          ...entry('legacy:2', 'a', 'transaction'),
+          'date': DateTime(
+            now.year,
+            now.month + 2,
+            now.day,
+          ).toIso8601String().substring(0, 10),
+          'recurringSourceId': 'legacy',
+          'recurringOffset': 2,
+          'description': 'Unknown edit history',
+        },
       ],
     });
     final legacy = DiaryController(legacyVault);
@@ -334,11 +498,18 @@ void main() {
       )['recurringOverridden'],
       isTrue,
     );
+    expect(
+      legacy.entries.firstWhere(
+        (e) => e['id'] == 'legacy:2',
+      )['recurringOverridden'],
+      isTrue,
+    );
     await legacy.deleteEntry('legacy');
     expect(
       legacy.entries.firstWhere((e) => e['id'] == 'legacy:1')['description'],
       'Possibly edited',
     );
+    expect(legacy.entries.any((e) => e['id'] == 'legacy:2'), isTrue);
     legacy.dispose();
     legacyVault.lock();
   });
@@ -367,7 +538,7 @@ void main() {
         'description': 'Keep user edit',
       });
       await diary.putEntry(entry('external', 'a', 'transaction'));
-      await diary.link('${children.last['id']}', 'external');
+      await diary.link('source-delete', 'external');
       await diary.deleteEntry('source-delete');
       expect(diary.entries.any((e) => e['id'] == children.last['id']), isFalse);
       expect(
@@ -382,6 +553,54 @@ void main() {
       );
     },
   );
+
+  test('link and unlink changes preserve recurring user edits', () async {
+    final now = DateTime.now();
+    final source = {
+      ...entry('linked-source', 'a', 'transaction'),
+      'date': DateTime(
+        now.year,
+        now.month - 1,
+        1,
+      ).toIso8601String().substring(0, 10),
+      'repeatMonthly': true,
+    };
+    await diary.putEntry(source);
+    await diary.putEntry(entry('external-link', 'a', 'transaction'));
+    final children = diary.entries
+        .where((e) => e['recurringSourceId'] == 'linked-source')
+        .toList();
+    expect(children.length, greaterThanOrEqualTo(3));
+    final linked = '${children[0]['id']}';
+    final unlinked = '${children[1]['id']}';
+    final unchanged = '${children[2]['id']}';
+    await diary.link(linked, 'external-link');
+    await diary.link(unlinked, 'external-link');
+    await diary.unlink(unlinked, 'external-link');
+    // A no-op unlink does not turn an unedited occurrence into an override.
+    await diary.unlink(unchanged, 'external-link');
+    await diary.putEntry({
+      ...source,
+      'date': DateTime(
+        now.year,
+        now.month - 1,
+        2,
+      ).toIso8601String().substring(0, 10),
+    });
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == linked)['linkedIds'],
+      contains('external-link'),
+    );
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == unlinked)['linkedIds'],
+      isEmpty,
+    );
+    expect(diary.entries.any((e) => e['id'] == unchanged), isFalse);
+    expect(
+      diary.entries.firstWhere((e) => e['id'] == 'external-link')['linkedIds'],
+      contains(linked),
+    );
+  });
   test('conversion preserves concurrent edits and stops on lock', () async {
     await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
     await diary.addManualRate('USD', DateTime(2026, 10, 1), 4);

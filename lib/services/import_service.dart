@@ -9,6 +9,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'ocr_service.dart';
 import 'currency.dart';
 import 'bank_pdf_parser.dart';
+import 'manual_numbers.dart';
 
 /// Column positions in the preview table. The user must confirm these and the
 /// resulting rows; statement layouts and debit/credit conventions vary.
@@ -40,17 +41,22 @@ class ImportPreview {
     required this.rows,
     required this.warnings,
     this.blocked = false,
+    this.uncertainRows = const {},
   });
 
   final String format;
   final bool blocked;
+
+  /// Indices in [rows] that require explicit direction confirmation.
+  final Set<int> uncertainRows;
 
   /// Rows are intentionally retained for review and mapping before import.
   final List<List<String>> rows;
   final List<String> warnings;
 
   ColumnMapping? suggestMapping() {
-    for (final row in rows) {
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      final row = rows[rowIndex];
       int? find(List<String> aliases) {
         for (var i = 0; i < row.length; i++) {
           final cell = row[i].trim().toLowerCase();
@@ -108,7 +114,8 @@ class ImportPreview {
         ? ''
         : row[index].trim();
     final result = <Map<String, dynamic>>[];
-    for (final row in rows) {
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      final row = rows[rowIndex];
       final date = parseStatementDate(cell(row, selected.date));
       final description = cell(row, selected.description);
       final debit = parseStatementAmount(cell(row, selected.debit));
@@ -119,7 +126,7 @@ class ImportPreview {
       if (hasSeparateDirection) {
         amount = (credit ?? 0).abs() - (debit ?? 0).abs();
       } else if (amount != null &&
-          !_hasExplicitAmountSign(amountText) &&
+          !hasExplicitAmountSign(amountText) &&
           (selected.cardSummary || amountIsExpense)) {
         amount = -amount.abs();
       }
@@ -146,10 +153,12 @@ class ImportPreview {
         // Unsigned, single-column bank amounts cannot safely be classified as
         // income or expense until the user confirms their direction.
         'signUncertain':
+            uncertainRows.contains(rowIndex) ||
             !hasSeparateDirection &&
-            !_hasExplicitAmountSign(amountText) &&
-            !selected.cardSummary &&
-            !amountIsExpense,
+                !hasExplicitAmountSign(amountText) &&
+                !selected.cardSummary &&
+                !amountIsExpense,
+        'ocrDirectionUnverified': uncertainRows.contains(rowIndex),
         'currency': currency ?? rawCurrency,
         'currencyInvalid': currency == null,
         'amountIls': currency == 'ILS' ? amount : null,
@@ -252,17 +261,6 @@ double? parseStatementAmount(String value) {
   return negative ? -number : number;
 }
 
-bool _hasExplicitAmountSign(String value) {
-  final compact = value
-      .replaceAll(RegExp(r'[\u200e\u200f\u202a-\u202e\s₪]'), '')
-      .replaceAll('−', '-');
-  return compact.startsWith('+') ||
-      compact.startsWith('-') ||
-      compact.endsWith('-') ||
-      compact.endsWith('+') ||
-      (compact.startsWith('(') && compact.endsWith(')'));
-}
-
 /// Conservatively extract one date and one amount from a PDF text line.
 /// Signed numbers are kept intact so the review screen can distinguish
 /// expenses and refunds. Other lines are retained as unparsed source text.
@@ -292,7 +290,28 @@ List<String> parsePdfStatementLine(String line) {
   return ['', trimmed, ''];
 }
 
+/// Header dates and totals are not evidence of a readable bank transaction.
+/// Unknown formats use complete generic lines and always retain a warning.
+bool pageNeedsPositionedOcr(
+  BankPdfPage page,
+  int pageNumber,
+  BankPdfResult? digitalBank,
+) {
+  if (digitalBank != null && !digitalBank.mixedProviders) {
+    return !digitalBank.transactionPages.contains(pageNumber);
+  }
+  if (digitalBank?.mixedProviders == true) return false;
+  return !const LineSplitter().convert(page.text).any((line) {
+    final row = parsePdfStatementLine(line);
+    return row[0].isNotEmpty && row[1].isNotEmpty && row[2].isNotEmpty;
+  });
+}
+
 class ImportService {
+  ImportService({Future<BankPdfPage?> Function(PdfPage)? recognizePage})
+    : _recognizePage = recognizePage ?? OcrService().recognizeWithPositions;
+
+  final Future<BankPdfPage?> Function(PdfPage) _recognizePage;
   Future<ImportPreview> parse(Uint8List bytes, String fileName) async {
     if (bytes.length >= 5 &&
         ascii.decode(bytes.take(5).toList(), allowInvalid: true) == '%PDF-') {
@@ -388,6 +407,7 @@ class ImportService {
     final rows = <List<String>>[
       ['Date', 'Description', 'Amount'],
     ];
+    final uncertainRows = <int>{};
     final warnings = <String>[
       'PDF extraction is incomplete and can lose columns, signs or text. Cross-check every page against the original and add missing transactions manually.',
     ];
@@ -404,7 +424,46 @@ class ImportService {
           ),
         );
       }
-      final bank = parseBankDocument(pages);
+      // A scanned page can contain selectable headers and totals. For known
+      // banks, only actual parsed rows count as usable text. Choose one
+      // representation per page so rows are never duplicated.
+      final digitalBank = parseBankDocument(pages);
+      final digitalPages = List<BankPdfPage>.of(pages);
+      for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+        if (!pageNeedsPositionedOcr(
+          pages[pageIndex],
+          pageIndex + 1,
+          digitalBank,
+        )) {
+          warnings.add(
+            'Page ${document.pages[pageIndex].pageNumber}: check for transactions embedded in images; selectable text may not include every row.',
+          );
+          continue;
+        }
+        final page = document.pages[pageIndex];
+        try {
+          final recognized = await _recognizePage(page);
+          if (recognized != null && recognized.text.trim().isNotEmpty) {
+            pages[pageIndex] = recognized;
+            warnings.add(
+              'Page ${page.pageNumber} was read with OCR; confirm every amount and direction against the original.',
+            );
+          } else {
+            warnings.add(
+              'Page ${page.pageNumber} has no readable OCR text; add its transactions manually.',
+            );
+          }
+        } on OcrUnavailableException {
+          warnings.add(
+            'Page ${page.pageNumber}: offline OCR is unavailable or failed its integrity check; add its transactions manually.',
+          );
+        } catch (_) {
+          warnings.add(
+            'Page ${page.pageNumber}: OCR failed; add its transactions manually.',
+          );
+        }
+      }
+      final bank = parseBankDocument(pages, headerPages: digitalPages);
       if (bank != null) {
         if (bank.mixedProviders) {
           return ImportPreview(
@@ -420,41 +479,26 @@ class ImportService {
           warnings.add(
             'Some bank statement rows or pages could not be read. Compare every page and add missing transactions manually.',
           );
+          for (final page in bank.incompletePages) {
+            warnings.add(
+              'Page $page contains unreadable or uncertain bank rows; compare it with the original and add missing transactions manually.',
+            );
+          }
         }
         return ImportPreview(
           format: 'pdf:${bank.provider}',
           rows: bank.rows,
           warnings: warnings,
+          uncertainRows: bank.uncertainRows,
         );
       }
       for (var pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
-        final page = document.pages[pageIndex];
-        var text = pages[pageIndex].text;
-        if (text.trim().isEmpty) {
-          try {
-            text = (await OcrService().recognize(page)) ?? '';
-          } on OcrUnavailableException {
-            const message =
-                'Offline OCR is unavailable or failed its integrity check; add missing transactions manually.';
-            if (!warnings.contains(message)) warnings.add(message);
-            text = '';
-          } catch (_) {
-            text = '';
-          }
-          if (text.trim().isEmpty) {
-            warnings.add(
-              'Page ${page.pageNumber} has no readable text; add its transactions manually.',
-            );
-            continue;
-          }
-          warnings.add(
-            'Page ${page.pageNumber} was read with OCR; check it carefully against the original.',
-          );
-        }
+        final text = pages[pageIndex].text;
         for (final line in const LineSplitter().convert(text)) {
           final trimmed = line.trim();
           if (trimmed.isEmpty) continue;
           rows.add(parsePdfStatementLine(trimmed));
+          if (pages[pageIndex].fromOcr) uncertainRows.add(rows.length - 1);
         }
       }
     } finally {
@@ -463,6 +507,11 @@ class ImportService {
     warnings.add(
       'PDF rows may need to be entered manually if columns cannot be mapped.',
     );
-    return ImportPreview(format: 'pdf', rows: rows, warnings: warnings);
+    return ImportPreview(
+      format: 'pdf',
+      rows: rows,
+      warnings: warnings,
+      uncertainRows: uncertainRows,
+    );
   }
 }

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../services/import_service.dart';
 import '../services/currency.dart';
 import '../services/insights.dart';
+import '../services/manual_numbers.dart';
 
 /// Standalone import flow. [onSave] is invoked only after explicit review.
 class ImportScreen extends StatefulWidget {
@@ -262,18 +263,28 @@ class _ImportScreenState extends State<ImportScreen> {
           parsedAmount != null &&
           newCurrency != null &&
           descriptionController.text.trim().isNotEmpty) {
-        final enteredAmount = amountController.text.trim();
-        final explicitSign =
-            enteredAmount.startsWith('+') ||
-            enteredAmount.startsWith('-') ||
-            enteredAmount.startsWith('−') ||
-            enteredAmount.endsWith('-') ||
-            enteredAmount.endsWith('+') ||
-            (enteredAmount.startsWith('(') && enteredAmount.endsWith(')'));
+        final explicitSign = hasExplicitAmountSign(amountController.text);
+        final oldAmount = row['amount'] as num;
+        final effectiveAmount = explicitSign
+            ? parsedAmount
+            : oldAmount < 0 ||
+                  (row['signUncertain'] == true && (expense || summary))
+            ? -parsedAmount.abs()
+            : parsedAmount.abs();
+        final oldDate = DateTime.tryParse('${row['date']}');
+        final sourceChanged =
+            oldAmount.abs() != effectiveAmount.abs() ||
+            normalizeCurrency('${row['currency']}') != newCurrency ||
+            oldDate == null ||
+            oldDate.year != parsedDate.year ||
+            oldDate.month != parsedDate.month ||
+            oldDate.day != parsedDate.day;
         setState(() {
           row['date'] = parsedDate.toIso8601String();
-          row['amount'] = parsedAmount;
-          if (row['signUncertain'] == true && explicitSign) {
+          row['amount'] = effectiveAmount;
+          if (row['signUncertain'] == true &&
+              row['ocrDirectionUnverified'] != true &&
+              (explicitSign || expense || summary)) {
             row['signUncertain'] = false;
           }
           row['status'] = parsedDate.isAfter(DateTime.now())
@@ -285,7 +296,18 @@ class _ImportScreenState extends State<ImportScreen> {
               : categoryController.text.trim();
           row['currency'] = newCurrency;
           row['currencyInvalid'] = false;
-          row['amountIls'] = newCurrency == 'ILS' ? parsedAmount : null;
+          if (newCurrency == 'ILS') {
+            row['amountIls'] = effectiveAmount;
+          } else if (sourceChanged) {
+            row['amountIls'] = null;
+          } else if (row['amountIls'] is num) {
+            final ils = (row['amountIls'] as num).abs();
+            row['amountIls'] = effectiveAmount < 0 ? -ils : ils;
+          }
+          if (sourceChanged || newCurrency == 'ILS') {
+            row.remove('rateDate');
+            row.remove('rateSource');
+          }
           refreshMatches();
         });
         valid = true;
@@ -316,6 +338,7 @@ class _ImportScreenState extends State<ImportScreen> {
     final ils = row['amountIls'];
     if (ils is num) row['amountIls'] = isExpense ? -ils.abs() : ils.abs();
     row['signUncertain'] = false;
+    row.remove('ocrDirectionUnverified');
   }
 
   Widget columnPicker(
@@ -593,6 +616,7 @@ class _ImportScreenState extends State<ImportScreen> {
                   'amount': 0.0,
                   'currency': 'ILS',
                   'amountIls': 0.0,
+                  'signUncertain': true,
                   'kind': summary ? 'card_summary' : 'transaction',
                   'linkedIds': <String>[],
                   'status': 'actual',
