@@ -4,11 +4,15 @@ import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:excel_plus/excel_plus.dart';
 import 'package:html/parser.dart' as html;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:pdfrx/pdfrx.dart';
 
 import 'ocr_service.dart';
 import 'currency.dart';
 import 'bank_pdf_parser.dart';
+import 'cal_pdf_parser.dart';
+import 'max_pdf_parser.dart';
+import 'yahav_pdf_parser.dart';
 import 'manual_numbers.dart';
 
 /// Column positions in the preview table. The user must confirm these and the
@@ -42,6 +46,8 @@ class ImportPreview {
     required this.warnings,
     this.blocked = false,
     this.uncertainRows = const {},
+    this.providerRows,
+    this.cardSuffixes = const [],
   });
 
   final String format;
@@ -49,6 +55,10 @@ class ImportPreview {
 
   /// Indices in [rows] that require explicit direction confirmation.
   final Set<int> uncertainRows;
+
+  /// Reviewed provider-specific drafts, retaining metadata a flat table cannot.
+  final List<Map<String, dynamic>>? providerRows;
+  final List<String> cardSuffixes;
 
   /// Rows are intentionally retained for review and mapping before import.
   final List<List<String>> rows;
@@ -107,6 +117,25 @@ class ImportPreview {
     bool amountIsExpense = false,
   }) {
     if (blocked) return [];
+    if (providerRows != null) {
+      return providerRows!.map((row) {
+        final result = Map<String, dynamic>.from(row);
+        result['id'] = '';
+        result['accountId'] = accountId;
+        result.putIfAbsent('category', () => 'Uncategorized');
+        result.putIfAbsent('currency', () => 'ILS');
+        result.putIfAbsent('kind', () => 'transaction');
+        result.putIfAbsent('linkedIds', () => <String>[]);
+        result.putIfAbsent('signUncertain', () => false);
+        result.putIfAbsent('status', () {
+          final date = DateTime.tryParse('${result['date']}');
+          return date != null && date.isAfter(DateTime.now())
+              ? 'planned'
+              : 'actual';
+        });
+        return result;
+      }).toList();
+    }
     final selected = mapping ?? suggestMapping();
     if (selected == null) return [];
     String cell(List<String> row, int? index) =>
@@ -312,6 +341,74 @@ bool pageNeedsPositionedOcr(
   });
 }
 
+/// Avoid OCRing long informational pages merely because they mention dates.
+@visibleForTesting
+bool providerPageNeedsOcr(
+  BankPdfPage page,
+  int pageNumber,
+  Set<int> transactionPages,
+  Set<int> headerPages,
+) {
+  return !transactionPages.contains(pageNumber) &&
+      (page.text.trim().length < 80 || headerPages.contains(pageNumber));
+}
+
+class _ProviderPreview {
+  const _ProviderPreview(
+    this.name,
+    this.rows,
+    this.pages,
+    this.incomplete, {
+    this.cards = const {},
+    this.warnings = const [],
+    this.headers = const {},
+  });
+  final String name;
+  final List<Map<String, dynamic>> rows;
+  final Set<int> pages, incomplete;
+  final Set<String> cards;
+  final Set<int> headers;
+  final List<String> warnings;
+}
+
+List<_ProviderPreview> _specificProviders(
+  List<BankPdfPage> pages, {
+  List<BankPdfPage>? headerPages,
+}) {
+  final cal = parseCalDocument(pages);
+  final max = parseMaxDocument(pages, headerPages: headerPages);
+  final yahav = parseYahavDocument(pages, headerPages: headerPages);
+  return [
+    if (cal != null)
+      _ProviderPreview(
+        'CAL',
+        cal.rows,
+        cal.transactionPages,
+        cal.incompletePages,
+        cards: cal.cardSuffixes,
+        headers: cal.recognizedPages,
+        warnings: cal.warnings,
+      ),
+    if (max != null)
+      _ProviderPreview(
+        'MAX',
+        max.rows,
+        max.transactionPages,
+        max.incompletePages,
+        cards: max.cardSuffixes,
+        headers: max.recognizedPages,
+      ),
+    if (yahav != null)
+      _ProviderPreview(
+        'Yahav',
+        yahav.rows,
+        yahav.transactionPages,
+        yahav.incompletePages,
+        headers: yahav.recognizedPages,
+      ),
+  ];
+}
+
 class ImportService {
   ImportService({Future<BankPdfPage?> Function(PdfPage)? recognizePage})
     : _recognizePage = recognizePage ?? OcrService().recognizeWithPositions;
@@ -433,13 +530,33 @@ class ImportService {
       // banks, only actual parsed rows count as usable text. Choose one
       // representation per page so rows are never duplicated.
       final digitalBank = parseBankDocument(pages);
+      final digitalProviders = _specificProviders(pages);
+      if (digitalProviders.length + (digitalBank == null ? 0 : 1) > 1) {
+        return ImportPreview(
+          format: 'pdf',
+          rows: const [],
+          blocked: true,
+          warnings: const [
+            'This PDF contains multiple bank statement formats. Import each bank separately.',
+          ],
+        );
+      }
       final digitalPages = List<BankPdfPage>.of(pages);
       for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-        if (!pageNeedsPositionedOcr(
-          pages[pageIndex],
-          pageIndex + 1,
-          digitalBank,
-        )) {
+        final knownProvider = digitalProviders.isNotEmpty;
+        final needsOcr = knownProvider
+            ? providerPageNeedsOcr(
+                pages[pageIndex],
+                pageIndex + 1,
+                digitalProviders.single.pages,
+                digitalProviders.single.headers,
+              )
+            : pageNeedsPositionedOcr(
+                pages[pageIndex],
+                pageIndex + 1,
+                digitalBank,
+              );
+        if (!needsOcr) {
           warnings.add(
             'Page ${document.pages[pageIndex].pageNumber}: check for transactions embedded in images; selectable text may not include every row.',
           );
@@ -469,6 +586,41 @@ class ImportService {
         }
       }
       final bank = parseBankDocument(pages, headerPages: digitalPages);
+      var providers = _specificProviders(pages, headerPages: digitalPages);
+      if (providers.isEmpty && digitalProviders.isNotEmpty) {
+        // If OCR loses the identifying header, retain the digital candidates
+        // and ask the user to complete any unreadable pages manually.
+        providers = digitalProviders;
+        warnings.add(
+          'Some bank statement rows or pages could not be read. Compare every page and add missing transactions manually.',
+        );
+      }
+      if (providers.length + (bank == null ? 0 : 1) > 1) {
+        return ImportPreview(
+          format: 'pdf',
+          rows: const [],
+          blocked: true,
+          warnings: const [
+            'This PDF contains multiple bank statement formats. Import each bank separately.',
+          ],
+        );
+      }
+      if (providers.isNotEmpty) {
+        final result = providers.single;
+        warnings.addAll(result.warnings);
+        for (final page in result.incomplete) {
+          warnings.add(
+            'Page $page contains unreadable or uncertain bank rows; compare it with the original and add missing transactions manually.',
+          );
+        }
+        return ImportPreview(
+          format: 'pdf:${result.name}',
+          rows: const [],
+          warnings: warnings,
+          providerRows: result.rows,
+          cardSuffixes: result.cards.toList()..sort(),
+        );
+      }
       if (bank != null) {
         if (bank.mixedProviders) {
           return ImportPreview(

@@ -24,6 +24,51 @@ Map<String, dynamic> row(
 };
 
 void main() {
+  test('suggests ambiguous pending and settled matches for review', () {
+    final pending1 = {
+      ...row('p1', '2026-03-01', -20),
+      'status': 'planned',
+      'pending': true,
+    };
+    final pending2 = {
+      ...row('p2', '2026-03-01', -20),
+      'status': 'planned',
+      'pending': true,
+    };
+    final settled = row('actual', '2026-03-03', -20);
+    final matches = Insights.matchCandidates(
+      [pending1, pending2, settled],
+      involvingIds: {'actual'},
+    );
+    expect(
+      matches.where((match) => match['type'] == 'duplicate'),
+      hasLength(2),
+    );
+  });
+  test('overdue pending entries affect forecast from today only', () {
+    final pending = {
+      ...row('pending', '2026-02-15', -20),
+      'status': 'planned',
+      'pending': true,
+    };
+    final future = {
+      ...row('future', '2026-03-05', -10),
+      'status': 'planned',
+      'pending': true,
+    };
+    final settled = {...row('settled', '2026-02-15', -99), 'pending': false};
+    final result = Insights.balanceProjection(
+      {'id': 'a', 'balance': 100},
+      [pending, future, settled],
+      today: DateTime(2026, 3, 1),
+    );
+    expect(result['balance'], 70);
+    final points = result['points'] as List;
+    expect(points, hasLength(2));
+    expect(points.first['date'], startsWith('2026-03-01'));
+    expect(points.first['pendingEstimate'], isTrue);
+    expect(pending['date'], '2026-02-15');
+  });
   test('import matching excludes pairs without a draft', () {
     final rows = [
       {

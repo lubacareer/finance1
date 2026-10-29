@@ -50,6 +50,35 @@ class ForecastScreen extends StatelessWidget {
     final matches = Insights.matchCandidates(rows, accounts: accounts);
     final names = {for (final a in accounts) '${a['id']}': '${a['name']}'};
     final byId = {for (final row in rows) '${row['id']}': row};
+    final today = DateTime.now();
+    final todayDay = DateTime(today.year, today.month, today.day);
+    final bankIds = accounts
+        .where((account) => account['type'] == 'bank')
+        .map((account) => '${account['id']}')
+        .toSet();
+    final upcomingCardPayments = rows.where((summary) {
+      final date = DateTime.tryParse('${summary['date']}');
+      if (summary['kind'] != 'card_summary' ||
+          date == null ||
+          (date.isBefore(todayDay) && summary['status'] != 'planned')) {
+        return false;
+      }
+      final linked = (summary['linkedIds'] as List? ?? [])
+          .map((id) => '$id')
+          .toSet();
+      return !rows.any((bank) {
+        final amount = summary['amountIls'];
+        final bankAmount = bank['amountIls'];
+        final reverse = (bank['linkedIds'] as List? ?? []).contains(
+          summary['id'],
+        );
+        return bankIds.contains('${bank['accountId']}') &&
+            (linked.contains('${bank['id']}') || reverse) &&
+            amount is num &&
+            bankAmount is num &&
+            (amount - bankAmount).abs() <= .01;
+      });
+    }).toList();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -140,7 +169,7 @@ class ForecastScreen extends StatelessWidget {
                 title: Text('${account['name']}'),
                 subtitle: Text(
                   hasBalance
-                      ? '${tr('Based on starting balance and planned or predicted entries.')}${(projection['missingRates'] as int) > 0 ? '\n${tr('Some transactions are excluded because an ILS rate is missing.')}' : ''}'
+                      ? '${tr('Based on starting balance and planned or predicted entries.')}${(projection['points'] as List).any((point) => point['pendingEstimate'] == true) ? '\n${tr('Pending transactions are included as estimates.')}' : ''}${(projection['missingRates'] as int) > 0 ? '\n${tr('Some transactions are excluded because an ILS rate is missing.')}' : ''}'
                       : tr('Set a current balance to project this account.'),
                 ),
                 trailing: hasBalance
@@ -149,6 +178,29 @@ class ForecastScreen extends StatelessWidget {
               );
             },
           ),
+        if (upcomingCardPayments.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            tr('Upcoming card payment estimates'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          Text(
+            tr(
+              'These estimates are separate; add a bank transaction to include a payment in its forecast.',
+            ),
+          ),
+          for (final payment in upcomingCardPayments)
+            ListTile(
+              dense: true,
+              title: Text(names['${payment['accountId']}'] ?? ''),
+              subtitle: Text('${payment['date']}'.split('T').first),
+              trailing: Text(
+                payment['amountIls'] is num
+                    ? '₪ ${_money(payment['amountIls'] as num)}'
+                    : tr('Missing rate'),
+              ),
+            ),
+        ],
         if (onLink != null) ...[
           const SizedBox(height: 20),
           Text(

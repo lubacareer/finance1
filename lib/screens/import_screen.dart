@@ -48,15 +48,27 @@ class _ImportScreenState extends State<ImportScreen> {
   bool loading = false;
   bool expense = false;
   bool summary = false;
+  String? selectedCardSuffix;
+  bool includePaymentCandidates = false;
+  bool unidentifiedCardAcknowledged = false;
   int? date, description, amount, debit, credit, currency, category;
   List<Map<String, dynamic>>? drafts;
   List<Map<String, dynamic>> matches = [];
   Map<String, Map<String, dynamic>> exactMatches = {};
   final Map<String, String> duplicateChoices = {};
 
+  String defaultDuplicateChoice(Map<String, dynamic> row) {
+    final match = exactMatches['${row['id']}'];
+    return match != null &&
+            (match['pending'] == true) != (row['pending'] == true)
+        ? 'both'
+        : 'existing';
+  }
+
   bool isSkipped(Map<String, dynamic> row) =>
       exactMatches.containsKey('${row['id']}') &&
-      (duplicateChoices['${row['id']}'] ?? 'existing') == 'existing';
+      (duplicateChoices['${row['id']}'] ?? defaultDuplicateChoice(row)) ==
+          'existing';
 
   void refreshMatches() {
     final current = drafts;
@@ -67,7 +79,11 @@ class _ImportScreenState extends State<ImportScreen> {
       return;
     }
     final previous = exactMatches;
-    final next = exactImportMatches(current, widget.existing);
+    final exact = exactImportMatches(current, widget.existing);
+    final next = {
+      ...exact,
+      ...pendingImportMatches(current, widget.existing, exact),
+    };
     for (final id in duplicateChoices.keys.toList()) {
       if (next[id] == null || previous[id]?['id'] != next[id]?['id']) {
         duplicateChoices.remove(id);
@@ -154,6 +170,9 @@ class _ImportScreenState extends State<ImportScreen> {
       if (!mounted) return;
       setState(() {
         preview = result;
+        selectedCardSuffix = null;
+        includePaymentCandidates = false;
+        unidentifiedCardAcknowledged = false;
         fileName = file.name;
         date = suggested?.date;
         description = suggested?.description;
@@ -185,6 +204,54 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void makeDrafts() {
+    if (preview?.providerRows != null) {
+      final account = widget.accounts
+          .where((a) => a['id'] == widget.accountId)
+          .firstOrNull;
+      final expectedType = preview!.format == 'pdf:Yahav' ? 'bank' : 'card';
+      if (account != null && account['type'] != expectedType) {
+        setState(
+          () => error = t(
+            'This statement does not match the selected account type.',
+          ),
+        );
+        return;
+      }
+      if (preview!.cardSuffixes.isNotEmpty && selectedCardSuffix == null) {
+        setState(() => error = t('Select a card before reviewing.'));
+        return;
+      }
+      if ((preview!.format == 'pdf:CAL' || preview!.format == 'pdf:MAX') &&
+          preview!.cardSuffixes.isEmpty &&
+          !unidentifiedCardAcknowledged) {
+        setState(
+          () => error = t(
+            'Confirm that these transactions belong to the selected card.',
+          ),
+        );
+        return;
+      }
+      setState(() {
+        drafts = preview!.candidates(accountId: widget.accountId).where((row) {
+          final card = row['cardSuffix'];
+          if (selectedCardSuffix != null && card != selectedCardSuffix) {
+            return false;
+          }
+          return row['paymentCandidate'] != true || includePaymentCandidates;
+        }).toList();
+        final stamp = DateTime.now().microsecondsSinceEpoch;
+        for (var i = 0; i < drafts!.length; i++) {
+          drafts![i]['id'] = 'import-$stamp-$i';
+        }
+        refreshMatches();
+        error = drafts!.isEmpty
+            ? t(
+                'No complete transactions found. Check the mapping or add entries manually.',
+              )
+            : null;
+      });
+      return;
+    }
     if (preview == null ||
         date == null ||
         description == null ||
@@ -294,9 +361,17 @@ class _ImportScreenState extends State<ImportScreen> {
       final parsedDate = parseStatementDate(dateController.text);
       final parsedAmount = parseStatementAmount(amountController.text);
       final newCurrency = normalizeCurrency(currencyController.text);
+      final conflictingIls =
+          row['currencyInvalid'] == true &&
+          row['rateSource'] == 'statement' &&
+          newCurrency == 'ILS' &&
+          row['amountIls'] is num &&
+          parsedAmount != null &&
+          (row['amountIls'] as num).abs() != parsedAmount.abs();
       if (parsedDate != null &&
           parsedAmount != null &&
           newCurrency != null &&
+          !conflictingIls &&
           descriptionController.text.trim().isNotEmpty) {
         final explicitSign = hasExplicitAmountSign(amountController.text);
         final oldAmount = row['amount'] as num;
@@ -314,6 +389,16 @@ class _ImportScreenState extends State<ImportScreen> {
             oldDate.year != parsedDate.year ||
             oldDate.month != parsedDate.month ||
             oldDate.day != parsedDate.day;
+        final retainStatementIls =
+            row['currencyInvalid'] == true &&
+            row['rateSource'] == 'statement' &&
+            newCurrency != 'ILS' &&
+            oldAmount.abs() == effectiveAmount.abs() &&
+            oldDate != null &&
+            oldDate.year == parsedDate.year &&
+            oldDate.month == parsedDate.month &&
+            oldDate.day == parsedDate.day &&
+            row['amountIls'] is num;
         setState(() {
           row['date'] = parsedDate.toIso8601String();
           row['amount'] = effectiveAmount;
@@ -322,7 +407,8 @@ class _ImportScreenState extends State<ImportScreen> {
               (explicitSign || expense || summary)) {
             row['signUncertain'] = false;
           }
-          row['status'] = parsedDate.isAfter(DateTime.now())
+          row['status'] =
+              row['pending'] == true || parsedDate.isAfter(DateTime.now())
               ? 'planned'
               : 'actual';
           row['description'] = descriptionController.text.trim();
@@ -333,13 +419,13 @@ class _ImportScreenState extends State<ImportScreen> {
           row['currencyInvalid'] = false;
           if (newCurrency == 'ILS') {
             row['amountIls'] = effectiveAmount;
-          } else if (sourceChanged) {
+          } else if (sourceChanged && !retainStatementIls) {
             row['amountIls'] = null;
           } else if (row['amountIls'] is num) {
             final ils = (row['amountIls'] as num).abs();
             row['amountIls'] = effectiveAmount < 0 ? -ils : ils;
           }
-          if (sourceChanged || newCurrency == 'ILS') {
+          if ((sourceChanged && !retainStatementIls) || newCurrency == 'ILS') {
             row.remove('rateDate');
             row.remove('rateSource');
           }
@@ -349,7 +435,9 @@ class _ImportScreenState extends State<ImportScreen> {
       } else if (mounted) {
         setState(
           () => error = t(
-            newCurrency == null
+            conflictingIls
+                ? 'The ILS charge differs from the original amount; check the currency.'
+                : newCurrency == null
                 ? 'Enter a valid currency code.'
                 : 'Enter a valid date, description and amount.',
           ),
@@ -463,7 +551,62 @@ class _ImportScreenState extends State<ImportScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-            if (!data.blocked) ...[
+            if (!data.blocked && data.providerRows != null) ...[
+              if ((data.format == 'pdf:CAL' || data.format == 'pdf:MAX') &&
+                  data.cardSuffixes.isEmpty)
+                CheckboxListTile(
+                  value: unidentifiedCardAcknowledged,
+                  title: Text(
+                    t(
+                      'Confirm that these transactions belong to the selected card.',
+                    ),
+                  ),
+                  onChanged: (value) => setState(() {
+                    unidentifiedCardAcknowledged = value ?? false;
+                    drafts = null;
+                  }),
+                ),
+              if (data.cardSuffixes.isNotEmpty)
+                DropdownButtonFormField<String>(
+                  initialValue: selectedCardSuffix,
+                  decoration: InputDecoration(
+                    labelText: t('Select statement card'),
+                  ),
+                  items: [
+                    for (final card in data.cardSuffixes)
+                      DropdownMenuItem(value: card, child: Text('•••• $card')),
+                  ],
+                  onChanged: (card) => setState(() {
+                    selectedCardSuffix = card;
+                    drafts = null;
+                  }),
+                ),
+              if (selectedCardSuffix != null)
+                Text(
+                  '${t('Rows for other or unidentified cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
+                ),
+              if (data.providerRows!.any(
+                (row) => row['paymentCandidate'] == true,
+              ))
+                CheckboxListTile(
+                  value: includePaymentCandidates,
+                  title: Text(t('Review statement payment total')),
+                  subtitle: Text(
+                    t(
+                      'Payment totals are separate from purchases and may need linking.',
+                    ),
+                  ),
+                  onChanged: (value) => setState(() {
+                    includePaymentCandidates = value ?? false;
+                    drafts = null;
+                  }),
+                ),
+              FilledButton.tonal(
+                onPressed: makeDrafts,
+                child: Text(t('Prepare review')),
+              ),
+            ],
+            if (!data.blocked && data.providerRows == null) ...[
               const SizedBox(height: 16),
               Text(
                 t('Map columns'),
@@ -601,7 +744,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     '${row['description']}  •  ${row['amount']} ${row['currency']}',
                   ),
                   subtitle: Text(
-                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
+                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${row['pending'] == true ? '${t('Pending')} • ' : ''}${row['billingDate'] != null ? '${t('Billing date')}: ${'${row['billingDate']}'.split('T').first} • ' : ''}${row['rateSource'] == 'statement' && row['amountIls'] is num ? '${t('Statement ILS amount')}: ${row['amountIls']} • ' : ''}${row['classificationUncertain'] == true ? '${t('Choose transaction type')} • ' : ''}${row['currencyInvalid'] == true ? '${t('Invalid currency')} • ' : ''}${t(row['signUncertain'] == true
                         ? 'Choose income or expense'
                         : (row['amount'] as num) < 0
                         ? 'Expense'
@@ -611,6 +754,33 @@ class _ImportScreenState extends State<ImportScreen> {
                   trailing: Wrap(
                     spacing: 0,
                     children: [
+                      if (row['classificationUncertain'] == true)
+                        PopupMenuButton<String>(
+                          tooltip: t('Choose transaction type'),
+                          icon: const Icon(Icons.category_outlined),
+                          onSelected: (kind) => setState(() {
+                            row['kind'] = kind == 'payment'
+                                ? 'card_summary'
+                                : 'transaction';
+                            setDirection(row, kind != 'income');
+                            row['classificationUncertain'] = false;
+                            refreshMatches();
+                          }),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'expense',
+                              child: Text(t('Expense')),
+                            ),
+                            PopupMenuItem(
+                              value: 'income',
+                              child: Text(t('Income')),
+                            ),
+                            PopupMenuItem(
+                              value: 'payment',
+                              child: Text(t('Card payment')),
+                            ),
+                          ],
+                        ),
                       PopupMenuButton<bool>(
                         tooltip: t('Choose income or expense'),
                         icon: Icon(
@@ -647,17 +817,19 @@ class _ImportScreenState extends State<ImportScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${t('Exact match already saved')}: '
+                        '${t((exactMatches['${row['id']}']!['pending'] == true) != (row['pending'] == true) ? 'Possible pending match' : 'Exact match already saved')}: '
                         '${exactMatches['${row['id']}']!['description']} | ${(exactMatches['${row['id']}']!['date'] as String).split('T').first} | '
                         '${exactMatches['${row['id']}']!['amount']} ${exactMatches['${row['id']}']!['currency']} | '
-                        '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}',
+                        '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}'
+                        '${exactMatches['${row['id']}']!['pending'] == true ? ' | ${t('Pending')}' : ''}',
                       ),
                       DropdownButtonFormField<String>(
                         key: ValueKey(
-                          '${row['id']}-${exactMatches['${row['id']}']!['id']}-${duplicateChoices['${row['id']}'] ?? 'existing'}',
+                          '${row['id']}-${exactMatches['${row['id']}']!['id']}-${duplicateChoices['${row['id']}'] ?? defaultDuplicateChoice(row)}',
                         ),
                         initialValue:
-                            duplicateChoices['${row['id']}'] ?? 'existing',
+                            duplicateChoices['${row['id']}'] ??
+                            defaultDuplicateChoice(row),
                         decoration: InputDecoration(
                           labelText: t('Duplicate action'),
                         ),
@@ -722,6 +894,7 @@ class _ImportScreenState extends State<ImportScreen> {
                           .any(
                             (row) =>
                                 row['signUncertain'] == true ||
+                                row['classificationUncertain'] == true ||
                                 row['currencyInvalid'] == true,
                           )
                   ? null

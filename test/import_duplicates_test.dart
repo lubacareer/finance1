@@ -20,6 +20,43 @@ Map<String, dynamic> row(
 };
 
 void main() {
+  test('offers unique pending/settled matches across nearby days', () {
+    final draft = {...row('new', date: '2026-10-03'), 'status': 'actual'};
+    final pending = {...row('pending'), 'status': 'planned', 'pending': true};
+    final matches = pendingImportMatches([draft], [pending], {});
+    expect(matches['new']?['id'], 'pending');
+    expect(
+      pendingImportMatches(
+        [draft],
+        [
+          pending,
+          {...pending, 'id': 'other'},
+        ],
+        {},
+      ),
+      isEmpty,
+    );
+    expect(
+      pendingImportMatches(
+        [draft],
+        [
+          {...pending, 'date': '2026-09-01'},
+        ],
+        {},
+      ),
+      isEmpty,
+    );
+    expect(
+      pendingImportMatches(
+        [draft],
+        [
+          {...pending, 'amount': -20},
+        ],
+        {},
+      ),
+      isEmpty,
+    );
+  });
   test('matches saved records one-to-one, never drafts against each other', () {
     final drafts = [row('d1'), row('d2'), row('d3')];
     final saved = [row('s1'), row('s2')];

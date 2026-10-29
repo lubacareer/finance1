@@ -96,8 +96,17 @@ class Insights {
         final ba = _ils(b);
         if (bd == null || ba == null || (aa - ba).abs() > 0.01) continue;
         final days = ad.difference(bd).inDays.abs();
+        final pendingSettlement =
+            (a['pending'] == true &&
+                a['status'] == 'planned' &&
+                b['pending'] != true &&
+                (b['status'] ?? 'actual') == 'actual') ||
+            (b['pending'] == true &&
+                b['status'] == 'planned' &&
+                a['pending'] != true &&
+                (a['status'] ?? 'actual') == 'actual');
         if (a['accountId'] == b['accountId'] &&
-            days == 0 &&
+            (days == 0 || (pendingSettlement && days <= 7)) &&
             _normal(a['description']) == _normal(b['description'])) {
           result.add({
             'type': 'duplicate',
@@ -287,13 +296,26 @@ class Insights {
     final day = DateTime(now.year, now.month, now.day);
     final end = DateTime(now.year, now.month + 3, now.day);
     var balance = (account['balance'] as num?)?.toDouble() ?? 0.0;
+    DateTime? effectiveDate(Map<String, dynamic> row) {
+      final date = _date(row['date']);
+      if (date == null) return null;
+      final transactionDay = DateTime(date.year, date.month, date.day);
+      if (row['pending'] == true &&
+          row['status'] == 'planned' &&
+          !transactionDay.isAfter(day)) {
+        return day;
+      }
+      return transactionDay;
+    }
+
     final future = rows.where((r) {
-      final date = _date(r['date']);
+      final date = effectiveDate(r);
       return r['accountId'] == account['id'] &&
           date != null &&
-          date.isAfter(day) &&
+          (date.isAfter(day) ||
+              (r['pending'] == true && r['status'] == 'planned')) &&
           !date.isAfter(end);
-    }).toList()..sort((a, b) => '${a['date']}'.compareTo('${b['date']}'));
+    }).toList()..sort((a, b) => effectiveDate(a)!.compareTo(effectiveDate(b)!));
     final points = <Map<String, dynamic>>[];
     var missingRates = 0;
     for (final row in future) {
@@ -304,9 +326,11 @@ class Insights {
       }
       balance += amount;
       points.add({
-        'date': row['date'],
+        'date': effectiveDate(row)!.toIso8601String(),
         'balance': balance,
         'transactionId': row['id'],
+        if (row['pending'] == true && row['status'] == 'planned')
+          'pendingEstimate': true,
       });
     }
     return {

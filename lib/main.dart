@@ -933,6 +933,7 @@ class _HomeState extends State<Home> {
           date.year != now.year ||
           date.month != now.month ||
           row['status'] == 'predicted' ||
+          (row['pending'] == true && row['status'] == 'planned') ||
           !Insights.countsAsSpending(row, rows)) {
         continue;
       }
@@ -1210,7 +1211,11 @@ class _HomeState extends State<Home> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''} • ${t(e['status'] == 'planned' ? 'Planned' : 'Actual')}',
+                    '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''} • ${t(e['pending'] == true && e['status'] == 'planned'
+                        ? 'Pending'
+                        : e['status'] == 'planned'
+                        ? 'Planned'
+                        : 'Actual')}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall,
@@ -1733,6 +1738,7 @@ class CashFlowChart extends StatelessWidget {
         if (d == null ||
             d.year != month.year ||
             d.month != month.month ||
+            (r['pending'] == true && r['status'] == 'planned') ||
             !Insights.countsAsSpending(r, rows)) {
           continue;
         }

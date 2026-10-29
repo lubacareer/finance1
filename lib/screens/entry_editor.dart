@@ -442,6 +442,7 @@ class _EntryEditorState extends State<_EntryEditor> {
               'amountIls': currency == 'ILS' ? amount : convertedAmount,
               'kind': _kind,
               'status': _status,
+              if (_status != 'planned') 'pending': false,
               'repeatMonthly': _repeatMonthly,
               'linkedIds': widget.existing?['linkedIds'] ?? <String>[],
             };

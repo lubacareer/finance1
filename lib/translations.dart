@@ -1,5 +1,33 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Statement ILS amount': 'סכום החיוב בשקלים לפי הדוח',
+    'Upcoming card payment estimates': 'הערכות לחיובי כרטיס קרובים',
+    'These estimates are separate; add a bank transaction to include a payment in its forecast.': 'הערכות אלו נפרדות; יש להוסיף תנועה לחשבון הבנק כדי לכלול חיוב בתחזית שלו.',
+    'Confirm that these transactions belong to the selected card.':
+        'יש לאשר שהתנועות שייכות לכרטיס שנבחר.',
+    'The ILS charge differs from the original amount; check the currency.':
+        'סכום החיוב בשקלים שונה מהסכום המקורי; יש לבדוק את המטבע.',
+    'Possible pending match': 'התאמה אפשרית לתנועה בהמתנה',
+    'This CAL transaction list does not include amounts. Choose a detailed statement or add entries manually.': 'רשימת התנועות של כאל אינה כוללת סכומים. יש לבחור דוח מפורט או להוסיף תנועות ידנית.',
+    'Some CAL transactions could not be read. Compare with the original and add missing entries manually.': 'לא ניתן לקרוא חלק מתנועות כאל. יש להשוות למקור ולהוסיף תנועות חסרות ידנית.',
+    'This statement does not match the selected account type.':
+        'הדוח אינו תואם לסוג החשבון שנבחר.',
+    'Rows for other or unidentified cards are not imported':
+        'שורות של כרטיסים אחרים או לא מזוהים לא ייובאו',
+    'Select a card before reviewing.': 'יש לבחור כרטיס לפני הבדיקה.',
+    'Select statement card': 'בחירת כרטיס מהדוח',
+    'Review statement payment total': 'בדיקת סכום החיוב הכולל בדוח',
+    'Payment totals are separate from purchases and may need linking.':
+        'סכומי החיוב נפרדים מהרכישות וייתכן שיידרש לקשר ביניהם.',
+    'Billing date': 'תאריך חיוב',
+    'Choose transaction type': 'בחירת סוג התנועה',
+    'Card payment': 'תשלום בכרטיס',
+    'CAL': 'כאל',
+    'MAX': 'מקס',
+    'Yahav': 'יהב',
+    'Pending': 'בהמתנה',
+    'Pending transactions are included as estimates.':
+        'תנועות בהמתנה נכללות כהערכה.',
     'Page {page} has no readable OCR text; add its transactions manually.': 'לא נמצא טקסט קריא בזיהוי התווים בעמוד {page}; הוסיפו את התנועות שבו ידנית.',
     'Page {page} was read with OCR; confirm every amount and direction against the original.':
         'עמוד {page} נקרא בזיהוי תווים; בדקו כל סכום וסוג תנועה מול המקור.',
@@ -265,6 +293,33 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Statement ILS amount': 'Сумма в шекелях по выписке',
+    'Upcoming card payment estimates': 'Предстоящие платежи по картам (оценка)',
+    'These estimates are separate; add a bank transaction to include a payment in its forecast.': 'Эти оценки показаны отдельно; добавьте банковскую операцию, чтобы учесть платёж в прогнозе счёта.',
+    'Confirm that these transactions belong to the selected card.':
+        'Подтвердите, что эти операции относятся к выбранной карте.',
+    'The ILS charge differs from the original amount; check the currency.': 'Сумма списания в шекелях отличается от исходной суммы; проверьте валюту.',
+    'Possible pending match': 'Возможное совпадение с ожидающей операцией',
+    'This CAL transaction list does not include amounts. Choose a detailed statement or add entries manually.': 'В этом списке CAL нет сумм. Выберите подробную выписку или добавьте операции вручную.',
+    'Some CAL transactions could not be read. Compare with the original and add missing entries manually.': 'Некоторые операции CAL не удалось прочитать. Сверьте с оригиналом и добавьте недостающие вручную.',
+    'This statement does not match the selected account type.':
+        'Выписка не соответствует типу выбранного счёта.',
+    'Rows for other or unidentified cards are not imported':
+        'Строки других или неопознанных карт не импортируются',
+    'Select a card before reviewing.': 'Перед проверкой выберите карту.',
+    'Select statement card': 'Выберите карту из выписки',
+    'Review statement payment total':
+        'Проверить общую сумму платежа по выписке',
+    'Payment totals are separate from purchases and may need linking.': 'Платежи отражаются отдельно от покупок; может потребоваться связать их.',
+    'Billing date': 'Дата списания',
+    'Choose transaction type': 'Выберите тип операции',
+    'Card payment': 'Платёж по карте',
+    'CAL': 'Каль',
+    'MAX': 'Макс',
+    'Yahav': 'Яхав',
+    'Pending': 'Ожидает обработки',
+    'Pending transactions are included as estimates.':
+        'Ожидающие операции включены как оценка.',
     'Page {page} has no readable OCR text; add its transactions manually.': 'На странице {page} нет текста, распознанного OCR; добавьте её операции вручную.',
     'Page {page} was read with OCR; confirm every amount and direction against the original.': 'Страница {page} распознана с помощью OCR; сверьте каждую сумму и направление операции с оригиналом.',
     'Page {page}: check for transactions embedded in images; selectable text may not include every row.': 'Страница {page}: проверьте операции внутри изображений; выделяемый текст может включать не все строки.',
