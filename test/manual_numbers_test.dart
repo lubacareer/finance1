@@ -27,4 +27,20 @@ void main() {
       }
     },
   );
+
+  test('formats scientific numbers without rounding for manual editing', () {
+    for (final value in [
+      1e-7,
+      -1.2345678901234567e-30,
+      1e21,
+      1.2345678901234567e100,
+      5e-324,
+      1.7976931348623157e308,
+      32.7591234,
+    ]) {
+      final text = formatManualDecimal(value);
+      expect(text, isNot(contains(RegExp('[eE]'))), reason: '$value');
+      expect(parseManualDecimal(text), value, reason: '$value');
+    }
+  });
 }

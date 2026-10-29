@@ -243,8 +243,14 @@ void main() {
   test(
     'reconciles future generated occurrences while preserving edits',
     () async {
-      final now = DateTime.now();
-      final sourceDate = DateTime(now.year, now.month - 1, 1);
+      final now = DateTime(2026, 3, 1);
+      diary.dispose();
+      diary = DiaryController(
+        Vault(File('${temp.path}/diary.vault')),
+        clock: () => now,
+      );
+      await diary.unlock('synthetic-passphrase');
+      final sourceDate = DateTime(now.year, now.month - 1, 2);
       await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
       final source = {
         ...entry('source', 'a', 'transaction'),
@@ -266,7 +272,7 @@ void main() {
         'date': DateTime(
           sourceDate.year,
           sourceDate.month,
-          2,
+          1,
         ).toIso8601String().substring(0, 10),
       });
       expect(
@@ -291,7 +297,7 @@ void main() {
               e['recurringOffset'] == unedited['recurringOffset'] &&
               e['recurringScheduleDate'] != unedited['recurringScheduleDate'],
         )['date'],
-        endsWith('-02'),
+        endsWith('-01'),
       );
       await diary.putEntry({...source, 'repeatMonthly': false});
       expect(diary.entries.any((e) => e['id'] == unedited['id']), isFalse);

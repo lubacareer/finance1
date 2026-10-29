@@ -53,10 +53,12 @@ class _Header {
     this.credit,
     this.balance,
     this.top,
-    this.width,
-  );
+    this.width, {
+    this.reference,
+  });
   final String provider;
   final double date, debit, credit, balance, top, width;
+  final double? reference;
 }
 
 class _MatchPosition {
@@ -67,7 +69,7 @@ class _MatchPosition {
 
 final _dates = RegExp(r'\b\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})\b');
 final _amounts = RegExp(
-  r'(?<![\d.,])(?:₪\s*)?[+\-−]?(?:\d{1,3}(?:[ ,.\u00a0]\d{3})+|\d+)[.,]\d{2}(?![\d.,])',
+  r'(?<![\d.,])(?:₪[ \u00a0]*)?[+\-−]?(?:\d{1,3}(?:[ ,.\u00a0]\d{3})+|\d+)[.,]\d{2}(?![\d.,])',
 );
 final _validAmount = RegExp(
   r'^(?:₪\s*)?[+\-−]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}|(?:\d+|\d{1,3}(?:\.\d{3})+),\d{2}|\d{1,3}(?:[ \u00a0]\d{3})+[.,]\d{2})$',
@@ -134,15 +136,49 @@ _Header? _header(BankPdfPage page) {
             b > .23 &&
             b < .31 &&
             dt > .85;
-        if (isLeumi || isBeinleumi) {
+        // Discount uses a single signed credit/debit column. Require the
+        // slash between both labels as well as the known column layout.
+        final first = math.min(debit.match.end, credit.match.end);
+        final last = math.max(debit.match.start, credit.match.start);
+        final combinedLabels =
+            first <= last && page.text.substring(first, last).contains('/');
+        final referenceHeaders =
+            [..._labels(page, 'אסמכתה'), ..._labels(page, 'אסמכתא')]
+                .where(
+                  (r) =>
+                      (r.y - debit.y).abs() < 4 &&
+                      r.right > math.max(debit.right, credit.right) &&
+                      r.right < date.left,
+                )
+                .toList();
+        final valueHeaders = _labels(page, 'יום ערך')
+            .where((v) => (v.y - debit.y).abs() < 4 && v.right < date.left)
+            .toList();
+        final isDiscount =
+            combinedLabels &&
+            referenceHeaders.isNotEmpty &&
+            valueHeaders.isNotEmpty &&
+            (debit.right - credit.right).abs() < page.width * .07 &&
+            math.max(d, c) > .25 &&
+            math.max(d, c) < .34 &&
+            b > .13 &&
+            b < .22 &&
+            dt > .88;
+        if (isLeumi || isBeinleumi || isDiscount) {
+          final signedColumn = math.max(debit.right, credit.right);
           return _Header(
-            isLeumi ? 'Leumi' : 'Beinleumi',
+            isDiscount
+                ? 'Discount'
+                : isLeumi
+                ? 'Leumi'
+                : 'Beinleumi',
             date.right,
-            debit.right,
-            credit.right,
+            isDiscount ? signedColumn : debit.right,
+            isDiscount ? signedColumn : credit.right,
             balance.right,
             debit.y,
             page.width,
+            reference: isDiscount ? referenceHeaders.first.right : null,
           );
         }
       }
@@ -151,7 +187,7 @@ _Header? _header(BankPdfPage page) {
   return null;
 }
 
-/// Recognize Leumi and Beinleumi statement tables independently. Unknown
+/// Recognize known bank statement tables independently. Unknown
 /// templates return null so callers can use generic extraction; mixed detected
 /// providers are blocked rather than silently combined into one account.
 BankPdfResult? parseBankDocument(
@@ -211,7 +247,26 @@ BankPdfResult? parseBankDocument(
       incomplete++;
       incompletePages.add(pageIndex + 1);
     }
-    final money = _positions(page, _amounts);
+    // Discount's reference and signed amount columns may appear as one text
+    // run, so mask other columns before matching monetary values. Coordinates
+    // remain aligned with the original page text.
+    final moneyPage = header.provider == 'Discount'
+        ? BankPdfPage(
+            text: String.fromCharCodes([
+              for (var j = 0; j < page.text.length; j++)
+                if (page.rects[j].isEmpty ||
+                    (page.rects[j].left > header.balance + 2 &&
+                        page.rects[j].right < header.debit + page.width * .025))
+                  page.text.codeUnitAt(j)
+                else
+                  32,
+            ]),
+            rects: page.rects,
+            width: page.width,
+            height: page.height,
+          )
+        : page;
+    final money = _positions(moneyPage, _amounts);
     final dateMatches = _positions(page, _dates);
     for (var i = 0; i < anchors.length; i++) {
       final date = anchors[i];
@@ -241,6 +296,35 @@ BankPdfResult? parseBankDocument(
         final closest = math.min(d, math.min(c, b));
         if (closest > page.width * .045 || closest == b) continue;
         final value = amount.match.group(0)!.trim();
+        if (header.provider == 'Discount') {
+          // Masking must never turn a clipped prefix or trailing sign into a
+          // valid-looking positive amount. Reject adjacent numeric glyphs.
+          bool suspiciousNeighbor(int index, int step, PdfRect edge) {
+            while (index >= 0 &&
+                index < page.text.length &&
+                (page.text[index] == ' ' || page.text[index] == '\u00a0')) {
+              index += step;
+            }
+            if (index < 0 || index >= page.text.length) return false;
+            final ch = page.text[index], rect = page.rects[index];
+            if (!RegExp(r'[\d.,+\-−]').hasMatch(ch) || rect.isEmpty) {
+              return false;
+            }
+            final gap = math.min(
+              (rect.right - edge.left).abs(),
+              (edge.right - rect.left).abs(),
+            );
+            return (rect.top - edge.top).abs() < 4 && gap < page.width * .018;
+          }
+
+          final firstRect = page.rects[amount.match.start];
+          final lastRect = page.rects[amount.match.end - 1];
+          if (suspiciousNeighbor(amount.match.start - 1, -1, firstRect) ||
+              suspiciousNeighbor(amount.match.end, 1, lastRect)) {
+            invalidAmount = true;
+            continue;
+          }
+        }
         // A malformed group must not be accepted by matching only its suffix
         // (for example, the "34,56" in "12 34,56"). A separated numeric
         // prefix is ambiguous, so leave this row for manual review.
@@ -284,7 +368,14 @@ BankPdfResult? parseBankDocument(
           invalidAmount = true;
           continue;
         }
-        if (closest == d) {
+        if (header.provider == 'Discount') {
+          final signed = value.replaceFirst(RegExp(r'^₪[ \u00a0]*'), '');
+          if (signed.startsWith('-') || signed.startsWith('−')) {
+            debit.add(value);
+          } else {
+            credit.add(value);
+          }
+        } else if (closest == d) {
           debit.add(value);
         } else {
           credit.add(value);
@@ -297,7 +388,9 @@ BankPdfResult? parseBankDocument(
         }
       }
       final description = StringBuffer();
-      final left = math.max(header.debit, header.credit) + page.width * .02;
+      final left = header.reference == null
+          ? math.max(header.debit, header.credit) + page.width * .02
+          : header.reference! + page.width * .01;
       for (var j = date.match.end; j < end && j < page.rects.length; j++) {
         final rect = page.rects[j], ch = page.text[j];
         if (excluded.contains(j)) continue;

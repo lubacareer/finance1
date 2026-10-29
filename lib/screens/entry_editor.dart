@@ -197,7 +197,9 @@ class _EntryEditorState extends State<_EntryEditor> {
     _amountIls = TextEditingController(
       text: existingCurrency == 'ILS'
           ? ''
-          : (convertedAmount is num ? convertedAmount.abs().toString() : ''),
+          : (convertedAmount is num
+                ? formatManualDecimal(convertedAmount.abs())
+                : ''),
     );
     final id = item?['accountId']?.toString();
     _account = widget.accounts.any((a) => a['id'] == id)

@@ -1,5 +1,6 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Discount': 'דיסקונט',
     'Review changed; please confirm again.': 'פרטי הבדיקה השתנו; יש לאשר שוב.',
     'A transaction changed since review. Review it again.':
         'תנועה השתנתה מאז הבדיקה. יש לבדוק אותה שוב.',
@@ -256,6 +257,7 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Discount': 'Дисконт',
     'Review changed; please confirm again.':
         'Данные проверки изменились; подтвердите ещё раз.',
     'A transaction changed since review. Review it again.':

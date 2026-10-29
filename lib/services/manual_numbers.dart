@@ -18,3 +18,25 @@ double? parseManualDecimal(String value) {
   final result = double.tryParse(normalized.replaceAll(',', '.'));
   return result != null && result.isFinite ? result : null;
 }
+
+/// Expand Dart's shortest round-trip representation into plain decimal text.
+/// Avoid fixed decimal places so an existing precise conversion is not rounded.
+String formatManualDecimal(num value) {
+  final text = value.toString();
+  final scientific = RegExp(r'^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$')
+      .firstMatch(text);
+  if (scientific == null) return text;
+
+  final sign = scientific[1]!;
+  final integer = scientific[2]!;
+  final digits = '$integer${scientific[3] ?? ''}';
+  final decimalPosition = integer.length + int.parse(scientific[4]!);
+  if (decimalPosition <= 0) {
+    return '${sign}0.${'0' * -decimalPosition}$digits';
+  }
+  if (decimalPosition >= digits.length) {
+    return '$sign$digits${'0' * (decimalPosition - digits.length)}';
+  }
+  return '$sign${digits.substring(0, decimalPosition)}.'
+      '${digits.substring(decimalPosition)}';
+}

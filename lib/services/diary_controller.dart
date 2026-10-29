@@ -9,8 +9,10 @@ import 'vault.dart';
 
 /// Coordinates vault writes and keeps all personal information on this device.
 class DiaryController extends ChangeNotifier {
-  DiaryController(this.vault);
+  DiaryController(this.vault, {DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
   final Vault vault;
+  final DateTime Function() _clock;
   Map<String, dynamic> _data = {};
   Future<void> _pending = Future.value();
   Object? lastSaveError;
@@ -158,7 +160,7 @@ class DiaryController extends ChangeNotifier {
   /// Reconcile future generated entries. Legacy children have no edit marker,
   /// so they are conservatively treated as user overrides.
   bool _extendRecurring({DateTime? today}) {
-    final now = today ?? DateTime.now();
+    final now = today ?? _clock();
     final start = DateTime(now.year, now.month, now.day);
     final horizonMonth = DateTime(now.year, now.month + 3, 1);
     final horizonDay = DateTime(
@@ -566,11 +568,15 @@ class DiaryController extends ChangeNotifier {
   }
 
   /// Returns the number of legacy rows skipped because their currency is invalid.
-  Future<int> convertMissingRates() async {
+  Future<int> convertMissingRates({
+    @visibleForTesting
+    Future<Map<String, dynamic>?> Function(String, DateTime)? lookup,
+  }) async {
     _assertEditable();
     final generation = _generation;
     final sourceRows = entries;
     final service = ExchangeRates(rates);
+    final quotes = <(String, int, int, int), Map<String, dynamic>?>{};
     final converted = <String, Map<String, dynamic>>{};
     var invalidCurrencies = 0;
     for (final row in sourceRows) {
@@ -582,7 +588,11 @@ class DiaryController extends ChangeNotifier {
         invalidCurrencies++;
         continue;
       }
-      final rate = await service.rate(currency, date);
+      final key = (currency, date.year, date.month, date.day);
+      if (!quotes.containsKey(key)) {
+        quotes[key] = await (lookup ?? service.rate)(currency, date);
+      }
+      final rate = quotes[key];
       if (generation != _generation || !vault.isUnlocked || _transitioning) {
         return invalidCurrencies;
       }

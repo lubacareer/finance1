@@ -17,7 +17,9 @@ class FakeRateDiary extends DiaryController {
   bool get unlocked => true;
 
   @override
-  Future<int> convertMissingRates() async {
+  Future<int> convertMissingRates({
+    Future<Map<String, dynamic>?> Function(String, DateTime)? lookup,
+  }) async {
     if (shouldFail) throw StateError('synthetic failure');
     return skipped;
   }

@@ -1466,12 +1466,12 @@ class _HomeState extends State<Home> {
             children: [
               TextButton.icon(
                 onPressed: () => markTransactions(filtered, isExpense: true),
-                icon: const Icon(Icons.south_west),
+                icon: const Icon(Icons.north_east),
                 label: Text(t('Mark shown as expenses')),
               ),
               TextButton.icon(
                 onPressed: () => markTransactions(filtered, isExpense: false),
-                icon: const Icon(Icons.north_east),
+                icon: const Icon(Icons.south_west),
                 label: Text(t('Mark shown as income')),
               ),
             ],

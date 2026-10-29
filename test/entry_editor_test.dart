@@ -159,6 +159,58 @@ void main() {
       expect(saved?['rateSource'], 'bankOfIsrael');
     },
   );
+  for (final converted in [0.0000001, 1e21]) {
+    testWidgets('editing preserves $converted converted amount and rate', (
+      tester,
+    ) async {
+      Map<String, dynamic>? saved;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  saved = await showEntryEditor(
+                    context,
+                    [
+                      {'id': 'bank', 'name': 'Bank'},
+                    ],
+                    existing: {
+                      'id': 'one',
+                      'accountId': 'bank',
+                      'date': '2026-01-01',
+                      'description': 'Example',
+                      'category': 'Food',
+                      'amount': -10.0,
+                      'currency': 'USD',
+                      'amountIls': -converted,
+                      'rateDate': '2026-01-01',
+                      'rateSource': 'bankOfIsrael',
+                      'kind': 'transaction',
+                      'status': 'actual',
+                      'linkedIds': <String>[],
+                    },
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Description'),
+        'Edited',
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(saved?['amountIls'], -converted);
+      expect(saved?['rateDate'], '2026-01-01');
+      expect(saved?['rateSource'], 'bankOfIsrael');
+    });
+  }
   for (final field in ['currency', 'date']) {
     testWidgets('changing source $field clears the prior conversion', (
       tester,

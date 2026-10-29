@@ -78,7 +78,105 @@ BankPdfPage beinleumi() {
   return page.build();
 }
 
+BankPdfPage discount({
+  bool header = true,
+  bool ocr = false,
+  String firstAmount = '-23.45',
+}) {
+  final page = FakePdfPage(600);
+  if (header) {
+    page.word('תאריך', 0, 650, right: 560);
+    page.word('יום ערך', 0, 650, right: 490);
+    page.word('אסמכתה', 0, 650, right: 250);
+    page.word('חובה', 0, 650, right: 160);
+    page.word('/', 160, 650);
+    page.word('זכות', 0, 650, right: 185);
+    page.word('יתרה', 0, 650, right: 105);
+    page.newline();
+  }
+  page.word('01/10/2026', 0, 630, right: 560);
+  page.word('02/10/2026', 0, 630, right: 490);
+  page.word('Synthetic expense', 300, 630);
+  page.word('123456', 0, 630, right: 245);
+  page.word(firstAmount, 0, 630, right: 181);
+  page.word('500.00', 0, 630, right: 103);
+  page.newline();
+  page.word('02/10/2026', 0, 600, right: 560);
+  page.word('03/10/2026', 0, 600, right: 490);
+  page.word('Synthetic income', 300, 600);
+  page.word('123', 0, 600, right: 245);
+  page.word('1,234.56', 0, 600, right: 181);
+  page.word('1,500.00', 0, 600, right: 103);
+  final result = page.build();
+  return BankPdfPage(
+    text: result.text,
+    rects: result.rects,
+    width: result.width,
+    height: result.height,
+    fromOcr: ocr,
+  );
+}
+
 void main() {
+  test(
+    'Discount parses signed amounts separately from references and balance',
+    () {
+      final bank = parseBankDocument([discount()])!;
+      expect(bank.provider, 'Discount');
+      expect(bank.incompleteCount, 0);
+      final candidates = ImportPreview(
+        format: 'pdf:Discount',
+        rows: bank.rows,
+        warnings: [],
+      ).candidates(accountId: 'a');
+      expect(candidates.map((r) => r['date']), [
+        '2026-10-01T00:00:00.000',
+        '2026-10-02T00:00:00.000',
+      ]);
+      expect(candidates.map((r) => r['amount']), [-23.45, 1234.56]);
+      expect(candidates.first['description'], 'Synthetic expense');
+    },
+  );
+
+  test('Discount rejects clipped digits or spaced and trailing signs', () {
+    for (final value in [
+      '- 23.45',
+      '23.45 -',
+      '-123456789012345678901.23',
+      '12 34,56',
+    ]) {
+      final result = parseBankDocument([discount(firstAmount: value)])!;
+      expect(result.incompleteCount, 1, reason: value);
+      expect(result.incompletePages, {1});
+      expect(result.rows.length, 2);
+    }
+  });
+
+  test('Discount reads shekel-prefixed negative amounts as expenses', () {
+    for (final value in ['₪-23.45', '₪ -23.45']) {
+      final result = parseBankDocument([discount(firstAmount: value)])!;
+      final candidates = ImportPreview(
+        format: 'pdf:Discount',
+        rows: result.rows,
+        warnings: [],
+      ).candidates(accountId: 'a');
+      expect(candidates.first['amount'], -23.45, reason: value);
+    }
+  });
+
+  test('Discount continuation and OCR require direction review', () {
+    final bank = parseBankDocument([
+      discount(),
+      discount(header: false, ocr: true),
+    ])!;
+    expect(bank.provider, 'Discount');
+    expect(bank.rows.length, 5);
+    expect(bank.uncertainRows, {3, 4});
+  });
+
+  test('Discount cannot be silently merged with another bank format', () {
+    expect(parseBankDocument([discount(), leumi()])!.mixedProviders, isTrue);
+  });
   test('Leumi parses separate debit and credit, ignoring running balances', () {
     final result = parseBankDocument([leumi()])!;
     expect(result.provider, 'Leumi');

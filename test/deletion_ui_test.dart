@@ -97,6 +97,20 @@ void main() {
       await tester.pumpWidget(DiaryApp(controller: diary, hasVault: true));
       await tester.tap(find.text('Diary'));
       await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.widgetWithText(TextButton, 'Mark shown as expenses'),
+          matching: find.byIcon(Icons.north_east),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.widgetWithText(TextButton, 'Mark shown as income'),
+          matching: find.byIcon(Icons.south_west),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.text('All categories'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Food').last);

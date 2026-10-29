@@ -124,7 +124,12 @@ class ImportPreview {
       var amount = parseStatementAmount(amountText);
       final hasSeparateDirection = debit != null || credit != null;
       if (hasSeparateDirection) {
-        amount = (credit ?? 0).abs() - (debit ?? 0).abs();
+        final difference = (credit ?? 0).abs() - (debit ?? 0).abs();
+        // Statement amounts have at most two decimal places, but subtracting
+        // their binary representations can produce extra fractional digits.
+        // Fixed formatting avoids scaling by 100, which can overflow for large
+        // finite values; Dart uses exponent notation for values >= 1e21.
+        amount = double.parse(difference.toStringAsFixed(2));
       } else if (amount != null &&
           !hasExplicitAmountSign(amountText) &&
           (selected.cardSummary || amountIsExpense)) {
