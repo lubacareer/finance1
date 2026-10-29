@@ -154,61 +154,63 @@ void main() {
     expect(bindings!.map((b) => b['provider']).toSet(), {'MAX'});
   });
 
-  testWidgets('maps two statement cards to the same new account', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1400, 2600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    List<Map<String, dynamic>>? saved, created, bindings;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ImportScreen(
-          accountId: '',
-          tr: (s) => s,
-          onSave: (_) async {},
-          onSaveMulti: (rows, _, _, accounts, mappings, _) async {
-            saved = rows;
-            created = accounts;
-            bindings = mappings;
-          },
-          parseFile: (_, _) async => ImportPreview(
-            format: 'pdf:MAX',
-            rows: const [],
-            warnings: const [],
-            cardSuffixes: const ['1111', '2222'],
-            providerRows: [
-              row('First purchase', '1111'),
-              row('Second purchase', '2222'),
-            ],
+  for (final format in ['MAX', 'Isracard']) {
+    testWidgets('$format maps two statement cards to the same new account', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      List<Map<String, dynamic>>? saved, created, bindings;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImportScreen(
+            accountId: '',
+            tr: (s) => s,
+            onSave: (_) async {},
+            onSaveMulti: (rows, _, _, accounts, mappings, _) async {
+              saved = rows;
+              created = accounts;
+              bindings = mappings;
+            },
+            parseFile: (_, _) async => ImportPreview(
+              format: 'pdf:$format',
+              rows: const [],
+              warnings: const [],
+              cardSuffixes: const ['1111', '2222'],
+              providerRows: [
+                row('First purchase', '1111'),
+                row('Second purchase', '2222'),
+              ],
+            ),
           ),
         ),
-      ),
-    );
-    await tester.tap(find.text('Choose a file'));
-    await tester.pumpAndSettle();
-    await choose(
-      tester,
-      'card-destination-1111-null',
-      'Create credit card account',
-    );
-    await tester.enterText(find.byType(TextField).last, 'Shared');
-    await tester.tap(find.text('Create'));
-    await tester.pumpAndSettle();
-    await choose(tester, 'card-destination-2222-null', 'Shared');
-    await tester.tap(find.text('Prepare review'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Confirm import'));
-    await tester.tap(find.text('Confirm import'));
-    await tester.pumpAndSettle();
-    expect(saved, hasLength(2));
-    expect(created, hasLength(1));
-    expect(bindings, hasLength(2));
-    expect(saved!.map((r) => r['accountId']).toSet(), hasLength(1));
-    expect(saved!.map((r) => r['cardProvider']).toSet(), {'MAX'});
-    expect(saved!.map((r) => r['cardSuffix']).toSet(), {'1111', '2222'});
-  });
+      );
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      await choose(
+        tester,
+        'card-destination-1111-null',
+        'Create credit card account',
+      );
+      await tester.enterText(find.byType(TextField).last, 'Shared');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      await choose(tester, 'card-destination-2222-null', 'Shared');
+      await tester.tap(find.text('Prepare review'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Confirm import'));
+      await tester.tap(find.text('Confirm import'));
+      await tester.pumpAndSettle();
+      expect(saved, hasLength(2));
+      expect(created, hasLength(1));
+      expect(bindings, hasLength(2));
+      expect(saved!.map((r) => r['accountId']).toSet(), hasLength(1));
+      expect(saved!.map((r) => r['cardProvider']).toSet(), {format});
+      expect(saved!.map((r) => r['cardSuffix']).toSet(), {'1111', '2222'});
+    });
+  }
 
   testWidgets(
     'previous mappings need confirmation and unknown CAL pages require a destination and payment opt-in',
@@ -287,7 +289,52 @@ void main() {
     },
   );
 
-  for (final format in ['CAL', 'MAX']) {
+  testWidgets(
+    'Isracard remembered mapping is suggested and still needs confirmation',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImportScreen(
+            accountId: '',
+            tr: (s) => s,
+            onSave: (_) async {},
+            accounts: const [
+              {'id': 'a', 'name': 'Card A', 'type': 'card'},
+            ],
+            savedCardBindings: const [
+              {'provider': 'ISRACARD', 'cardSuffix': '1111', 'accountId': 'a'},
+            ],
+            onSaveMulti: (_, _, _, _, _, _) async {},
+            parseFile: (_, _) async => ImportPreview(
+              format: 'pdf:Isracard',
+              rows: const [],
+              warnings: const [],
+              cardSuffixes: const ['1111'],
+              providerRows: [row('Purchase', '1111')],
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Previous choice; confirm again'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Prepare review'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Choose a destination or skip each card.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  for (final format in ['CAL', 'MAX', 'Isracard']) {
     testWidgets(
       '$format requires every unidentified page and reports exclusions',
       (tester) async {
@@ -514,59 +561,62 @@ void main() {
     expect(saved?.single['accountId'], 'bank');
   });
 
-  testWidgets('skipped duplicate snapshots are sent for revalidation', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1400, 2600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    List<Map<String, dynamic>>? saved, skipped;
-    final existing = {
-      ...row('Duplicate', '1111'),
-      'id': 'old',
-      'accountId': 'a',
-      'cardProvider': 'MAX',
-    };
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ImportScreen(
-          accountId: '',
-          tr: (s) => s,
-          onSave: (_) async {},
-          existing: [existing],
-          accounts: const [
-            {'id': 'a', 'name': 'Card A', 'type': 'card'},
-          ],
-          onSaveMulti: (rows, _, _, _, _, matches) async {
-            saved = rows;
-            skipped = matches;
-          },
-          parseFile: (_, _) async => ImportPreview(
-            format: 'pdf:MAX',
-            rows: const [],
-            warnings: const [],
-            cardSuffixes: const ['1111'],
-            providerRows: [
-              row('Duplicate', '1111'),
-              row('New purchase', '1111'),
-            ],
+  for (final format in ['MAX', 'Isracard']) {
+    testWidgets(
+      '$format skipped duplicate snapshots are sent for revalidation',
+      (tester) async {
+        tester.view.physicalSize = const Size(1400, 2600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        List<Map<String, dynamic>>? saved, skipped;
+        final existing = {
+          ...row('Duplicate', '1111'),
+          'id': 'old',
+          'accountId': 'a',
+          'cardProvider': format.toUpperCase(),
+        };
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportScreen(
+              accountId: '',
+              tr: (s) => s,
+              onSave: (_) async {},
+              existing: [existing],
+              accounts: const [
+                {'id': 'a', 'name': 'Card A', 'type': 'card'},
+              ],
+              onSaveMulti: (rows, _, _, _, _, matches) async {
+                saved = rows;
+                skipped = matches;
+              },
+              parseFile: (_, _) async => ImportPreview(
+                format: 'pdf:$format',
+                rows: const [],
+                warnings: const [],
+                cardSuffixes: const ['1111'],
+                providerRows: [
+                  row('Duplicate', '1111'),
+                  row('New purchase', '1111'),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+        await tester.tap(find.text('Choose a file'));
+        await tester.pumpAndSettle();
+        await choose(tester, 'card-destination-1111-null', 'Card A');
+        await tester.tap(find.text('Prepare review'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Confirm import'));
+        await tester.tap(find.text('Confirm import'));
+        await tester.pumpAndSettle();
+        expect(saved, hasLength(1));
+        expect(saved!.single['description'], 'New purchase');
+        expect(skipped?.single['id'], 'old');
+      },
     );
-    await tester.tap(find.text('Choose a file'));
-    await tester.pumpAndSettle();
-    await choose(tester, 'card-destination-1111-null', 'Card A');
-    await tester.tap(find.text('Prepare review'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Confirm import'));
-    await tester.tap(find.text('Confirm import'));
-    await tester.pumpAndSettle();
-    expect(saved, hasLength(1));
-    expect(saved!.single['description'], 'New purchase');
-    expect(skipped?.single['id'], 'old');
-  });
+  }
 
   testWidgets('confirmed mapping is saved when every row is skipped', (
     tester,

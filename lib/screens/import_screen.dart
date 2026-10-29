@@ -76,9 +76,12 @@ class _ImportScreenState extends State<ImportScreen> {
   late String selectedAccountId;
   static const _skipCard = '__skip_card__';
   static const _newCard = '__new_card__';
+  bool isCardProvider(String? format) =>
+      format == 'pdf:MAX' || format == 'pdf:CAL' || format == 'pdf:Isracard';
+  bool pageIdentifiedCard(String? format) =>
+      format == 'pdf:CAL' || format == 'pdf:Isracard';
   bool get multiCard =>
-      widget.onSaveMulti != null &&
-      (preview?.format == 'pdf:MAX' || preview?.format == 'pdf:CAL');
+      widget.onSaveMulti != null && isCardProvider(preview?.format);
   List<Map<String, dynamic>> get cardAccounts => [
     ...widget.accounts.where((account) => account['type'] == 'card'),
     ...stagedAccounts,
@@ -249,7 +252,8 @@ class _ImportScreenState extends State<ImportScreen> {
     final savedCandidates = widget.savedCardBindings
         .where(
           (binding) =>
-              binding['provider'] == provider &&
+              '${binding['provider'] ?? ''}'.trim().toUpperCase() ==
+                  provider.trim().toUpperCase() &&
               binding['cardSuffix'] == suffix,
         )
         .toList();
@@ -551,7 +555,7 @@ class _ImportScreenState extends State<ImportScreen> {
         return;
       }
       if ((preview!.format == 'pdf:MAX' ||
-              (preview!.format == 'pdf:CAL' &&
+              (pageIdentifiedCard(preview!.format) &&
                   preview!.providerRows!.every(
                     (r) => r['sourcePage'] == null,
                   ))) &&
@@ -568,7 +572,7 @@ class _ImportScreenState extends State<ImportScreen> {
         drafts = preview!.candidates(accountId: selectedAccountId).where((row) {
           final card = row['cardSuffix'];
           final unidentifiedCal =
-              preview!.format == 'pdf:CAL' &&
+              pageIdentifiedCard(preview!.format) &&
               (card == null || '$card'.trim().isEmpty);
           if (unidentifiedCal) {
             final page = row['sourcePage'] is int
@@ -590,7 +594,7 @@ class _ImportScreenState extends State<ImportScreen> {
         final stamp = DateTime.now().microsecondsSinceEpoch;
         for (var i = 0; i < drafts!.length; i++) {
           drafts![i]['id'] = 'import-$stamp-$i';
-          if (preview!.format == 'pdf:MAX' || preview!.format == 'pdf:CAL') {
+          if (isCardProvider(preview!.format)) {
             drafts![i]['cardProvider'] = preview!.format.substring(4);
           }
         }
@@ -947,7 +951,7 @@ class _ImportScreenState extends State<ImportScreen> {
                       unidentifiedDestinationPicker(page),
                   ] else ...[
                     if ((data.format == 'pdf:MAX' ||
-                            (data.format == 'pdf:CAL' &&
+                            (pageIdentifiedCard(data.format) &&
                                 data.providerRows!.every(
                                   (r) => r['sourcePage'] == null,
                                 ))) &&
@@ -987,7 +991,7 @@ class _ImportScreenState extends State<ImportScreen> {
                       Text(
                         '${t('Rows for other cards are not imported')}: ${data.providerRows!.where((row) => row['cardSuffix'] != null && row['cardSuffix'] != selectedCardSuffix && row['paymentCandidate'] != true).length}',
                       ),
-                    if (data.format == 'pdf:CAL')
+                    if (pageIdentifiedCard(data.format))
                       for (final page
                           in data.providerRows!
                               .where(
@@ -1011,10 +1015,14 @@ class _ImportScreenState extends State<ImportScreen> {
                             title: Text(
                               page == null
                                   ? t(
-                                      'Include unidentified CAL entries with unknown page for the selected card',
+                                      data.format == 'pdf:CAL'
+                                          ? 'Include unidentified CAL entries with unknown page for the selected card'
+                                          : 'Include unidentified entries with unknown page for the selected card',
                                     )
                                   : t(
-                                      'Include unidentified CAL entries from page {page} for the selected card',
+                                      data.format == 'pdf:CAL'
+                                          ? 'Include unidentified CAL entries from page {page} for the selected card'
+                                          : 'Include unidentified entries from page {page} for the selected card',
                                     ).replaceAll('{page}', '$page'),
                             ),
                             subtitle: Text(

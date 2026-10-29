@@ -316,6 +316,62 @@ void main() {
     },
   );
 
+  testWidgets('single-card Isracard unidentified pages require inclusion', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2400);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    List<Map<String, dynamic>>? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImportScreen(
+          accountId: 'card',
+          tr: (s) => s,
+          accounts: const [
+            {'id': 'card', 'type': 'card'},
+          ],
+          onSave: (rows) async => saved = rows,
+          parseFile: (_, _) async => ImportPreview(
+            format: 'pdf:Isracard',
+            rows: const [],
+            warnings: const [],
+            cardSuffixes: const ['1111'],
+            providerRows: [
+              {...draft('Known', card: '1111'), 'sourcePage': 1},
+              {...draft('Unidentified'), 'sourcePage': 2},
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Choose a file'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('•••• 1111').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Known'), findsWidgets);
+    expect(find.textContaining('Unidentified  •'), findsNothing);
+    await tester.tap(
+      find.text(
+        'Include unidentified entries from page 2 for the selected card',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Unidentified  •'), findsOneWidget);
+    await tester.ensureVisible(find.text('Confirm import'));
+    await tester.tap(find.text('Confirm import'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(2));
+    expect(saved!.every((r) => r['cardProvider'] == 'Isracard'), isTrue);
+  });
+
   testWidgets('editing a pending row preserves its pending state and date', (
     tester,
   ) async {

@@ -1,5 +1,11 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Isracard payment totals could not be identified reliably; add them manually if needed.': 'לא ניתן היה לזהות באופן אמין את סכומי החיוב הכוללים של ישראכרט; ניתן להוסיף אותם ידנית במידת הצורך.',
+    'Isracard': 'ישראכרט',
+    'Include unidentified entries with unknown page for the selected card':
+        'לכלול תנועות לא מזוהות מעמוד לא ידוע עבור הכרטיס שנבחר',
+    'Include unidentified entries from page {page} for the selected card':
+        'לכלול תנועות לא מזוהות מעמוד {page} עבור הכרטיס שנבחר',
     'Check the statement, then assign or explicitly skip these entries.':
         'יש לבדוק את הדוח ולאחר מכן לשייך או לדלג במפורש על התנועות האלה.',
     'No transactions selected for import.': 'לא נבחרו תנועות לייבוא.',
@@ -401,6 +407,11 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Isracard payment totals could not be identified reliably; add them manually if needed.': 'Не удалось надёжно определить итоговые суммы платежей Isracard; при необходимости добавьте их вручную.',
+    'Isracard': 'Исракард',
+    'Include unidentified entries with unknown page for the selected card': 'Включить неопознанные операции с неизвестной страницы для выбранной карты',
+    'Include unidentified entries from page {page} for the selected card':
+        'Включить неопознанные операции со страницы {page} для выбранной карты',
     'Check the statement, then assign or explicitly skip these entries.': 'Проверьте выписку, затем назначьте эти операции или явно пропустите их.',
     'No transactions selected for import.': 'Операции для импорта не выбраны.',
     'Choose a destination or skip unidentified entries on page {page}.': 'Выберите счёт назначения или пропустите неопознанные операции на странице {page}.',

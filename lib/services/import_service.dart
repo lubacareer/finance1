@@ -12,6 +12,7 @@ import 'currency.dart';
 import 'bank_pdf_parser.dart';
 import 'cal_pdf_parser.dart';
 import 'max_pdf_parser.dart';
+import 'isracard_pdf_parser.dart';
 import 'yahav_pdf_parser.dart';
 import 'manual_numbers.dart';
 
@@ -377,6 +378,7 @@ List<_ProviderPreview> _specificProviders(
 }) {
   final cal = parseCalDocument(pages);
   final max = parseMaxDocument(pages, headerPages: headerPages);
+  final isracard = parseIsracardDocument(pages, headerPages: headerPages);
   final yahav = parseYahavDocument(pages, headerPages: headerPages);
   return [
     if (cal != null)
@@ -397,6 +399,16 @@ List<_ProviderPreview> _specificProviders(
         max.incompletePages,
         cards: max.cardSuffixes,
         headers: max.recognizedPages,
+      ),
+    if (isracard != null)
+      _ProviderPreview(
+        'Isracard',
+        isracard.rows,
+        isracard.transactionPages,
+        isracard.incompletePages,
+        cards: isracard.cardSuffixes,
+        headers: isracard.recognizedPages,
+        warnings: isracard.warnings,
       ),
     if (yahav != null)
       _ProviderPreview(
