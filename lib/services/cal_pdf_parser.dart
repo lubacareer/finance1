@@ -81,8 +81,12 @@ String? _cardSuffixOnPage(String text) {
       '${RegExp.escape(label)}|${RegExp.escape(reversedLabel)}',
     ).allMatches(heading).toList();
     if (labels.length != 1) return null;
-    // Consecutive suffix-like numbers could represent multiple cards.
-    if (RegExp(r'(?<!\d)\d{4}\s+\d{4}(?!\d)').hasMatch(heading)) {
+    // Complete adjacent groups separated by punctuation, symbols, or space
+    // could identify multiple cards; never choose just the first one.
+    if (RegExp(
+      r'(?<!\d)\d{4}[\s\p{P}\p{S}]+\d{4}(?!\d)',
+      unicode: true,
+    ).hasMatch(heading)) {
       return null;
     }
     final labelMatch = labels.single;

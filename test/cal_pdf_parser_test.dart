@@ -196,6 +196,84 @@ void main() {
     }
   });
 
+  test('punctuated multiple card suffixes remain unidentified for review', () {
+    const normal =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    const reversed =
+        '\u05d8\u05d5\u05e8\u05d9\u05e4 \u05ea\u05d5\u05d0\u05e7\u05e1\u05e2 \u05dd\u05d9\u05d1\u05d5\u05d9\u05d7 \u05e1\u05d9\u05d8\u05e8\u05db';
+    for (final separator in [
+      '/',
+      ',',
+      '.',
+      '-',
+      ' ',
+      ' / ',
+      ';',
+      '\u2014',
+      '+',
+    ]) {
+      for (final heading in [
+        '$normal 1234${separator}5678',
+        '1234${separator}5678 $reversed',
+      ]) {
+        final parsed = parseCalDocument([example(heading: heading).page()])!;
+        expect(parsed.cardSuffixes, isEmpty, reason: heading);
+        expect(parsed.incompletePages, contains(1), reason: heading);
+        expect(parsed.rows, hasLength(3), reason: heading);
+        expect(
+          parsed.rows.every((row) => row['cardSuffix'] == null),
+          isTrue,
+          reason: heading,
+        );
+        expect(
+          parsed.rows.where((row) => row['kind'] == 'transaction'),
+          hasLength(2),
+          reason: heading,
+        );
+        expect(
+          parsed.rows.where((row) => row['paymentCandidate'] == true),
+          hasLength(1),
+          reason: heading,
+        );
+      }
+    }
+  });
+
+  test('card ambiguity guard respects numeric boundaries and unrelated text', () {
+    const header =
+        '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
+    for (final heading in [
+      '$header 1234 reference 5678',
+      '$header 1234 reference 12345/56789',
+      '$header 1234 reference 10/11/2026',
+      '$header 1234 reference 5678.90',
+      '$header 1234/56789',
+    ]) {
+      final parsed = parseCalDocument([example(heading: heading).page()])!;
+      expect(parsed.cardSuffixes, {'1234'}, reason: heading);
+      expect(
+        parsed.rows.every((row) => row['cardSuffix'] == '1234'),
+        isTrue,
+        reason: heading,
+      );
+    }
+    for (final heading in [
+      '$header 12345/5678',
+      '$header 12345/56789',
+      '$header 10/11/2026',
+      '$header 1234.56',
+      '$header 1234,56',
+    ]) {
+      final parsed = parseCalDocument([example(heading: heading).page()])!;
+      expect(parsed.cardSuffixes, isEmpty, reason: heading);
+      expect(
+        parsed.rows.every((row) => row['cardSuffix'] == null),
+        isTrue,
+        reason: heading,
+      );
+    }
+  });
+
   test('conflicting detailed headings cannot identify a page', () {
     const header =
         '\u05e4\u05d9\u05e8\u05d5\u05d8 \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d7\u05d9\u05d5\u05d1\u05d9\u05dd \u05db\u05e8\u05d8\u05d9\u05e1';
