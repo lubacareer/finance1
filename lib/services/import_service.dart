@@ -108,11 +108,14 @@ class ImportPreview {
       final description = cell(row, selected.description);
       final debit = parseStatementAmount(cell(row, selected.debit));
       final credit = parseStatementAmount(cell(row, selected.credit));
-      var amount = parseStatementAmount(cell(row, selected.amount));
-      if (debit != null || credit != null) {
+      final amountText = cell(row, selected.amount);
+      var amount = parseStatementAmount(amountText);
+      final hasSeparateDirection = debit != null || credit != null;
+      if (hasSeparateDirection) {
         amount = (credit ?? 0).abs() - (debit ?? 0).abs();
-      }
-      if (amount != null && (selected.cardSummary || amountIsExpense)) {
+      } else if (amount != null &&
+          !_hasExplicitAmountSign(amountText) &&
+          (selected.cardSummary || amountIsExpense)) {
         amount = -amount.abs();
       }
       if (date == null ||
@@ -139,6 +142,13 @@ class ImportPreview {
             ? 'Uncategorized'
             : cell(row, selected.category),
         'amount': amount,
+        // Unsigned, single-column bank amounts cannot safely be classified as
+        // income or expense until the user confirms their direction.
+        'signUncertain':
+            !hasSeparateDirection &&
+            !_hasExplicitAmountSign(amountText) &&
+            !selected.cardSummary &&
+            !amountIsExpense,
         'currency': currency,
         'amountIls': currency == 'ILS' ? amount : null,
         'kind': selected.cardSummary ? 'card_summary' : 'transaction',
@@ -176,10 +186,10 @@ DateTime? parseStatementDate(String value) {
 }
 
 double? parseStatementAmount(String value) {
-  var s = value.trim().replaceAll(
-    RegExp(r'[\u200e\u200f\u202a-\u202e\s₪]'),
-    '',
-  );
+  var s = value
+      .trim()
+      .replaceAll(RegExp(r'[\u200e\u200f\u202a-\u202e\s₪]'), '')
+      .replaceAll('−', '-');
   if (s.isEmpty) return null;
   var negative = false;
   if (s.startsWith('(') && s.endsWith(')')) {
@@ -189,11 +199,51 @@ double? parseStatementAmount(String value) {
   if (s.endsWith('-')) {
     negative = true;
     s = s.substring(0, s.length - 1);
+  } else if (s.endsWith('+')) {
+    s = s.substring(0, s.length - 1);
   }
   s = s.replaceAll(',', '');
   if (!RegExp(r'^[-+]?\d+(?:\.\d+)?$').hasMatch(s)) return null;
   final number = double.tryParse(s);
   return number == null ? null : (negative ? -number.abs() : number);
+}
+
+bool _hasExplicitAmountSign(String value) {
+  final compact = value
+      .replaceAll(RegExp(r'[\u200e\u200f\u202a-\u202e\s₪]'), '')
+      .replaceAll('−', '-');
+  return compact.startsWith('+') ||
+      compact.startsWith('-') ||
+      compact.endsWith('-') ||
+      compact.endsWith('+') ||
+      (compact.startsWith('(') && compact.endsWith(')'));
+}
+
+/// Conservatively extract one date and one amount from a PDF text line.
+/// Signed numbers are kept intact so the review screen can distinguish
+/// expenses and refunds. Other lines are retained as unparsed source text.
+List<String> parsePdfStatementLine(String line) {
+  final trimmed = line.trim().replaceAll(
+    RegExp(r'[\u200e\u200f\u202a-\u202e]'),
+    '',
+  );
+  final dates = RegExp(r'\b\d{1,2}[./]\d{1,2}[./](?:\d{4}|\d{2})\b')
+      .allMatches(trimmed)
+      .toList();
+  final remainder = dates.length == 1
+      ? trimmed.replaceFirst(dates.single.group(0)!, '')
+      : trimmed;
+  final amounts = RegExp(
+    r'(?:\(\s*₪?\s*[+\-−]?\s*\d[\d,]*\.\d{2}\s*₪?\s*\)|₪?\s*[+\-−]?\s*\d[\d,]*\.\d{2}\s*₪?\s*[+\-−]?)',
+  ).allMatches(remainder).toList();
+  if (dates.length == 1 && amounts.length == 1) {
+    final amount = amounts.single.group(0)!.trim();
+    final description = remainder
+        .replaceFirst(amounts.single.group(0)!, '')
+        .trim();
+    return [dates.single.group(0)!, description, amount];
+  }
+  return ['', trimmed, ''];
 }
 
 class ImportService {
@@ -317,25 +367,7 @@ class ImportService {
         for (final line in const LineSplitter().convert(text)) {
           final trimmed = line.trim();
           if (trimmed.isEmpty) continue;
-          final dates = RegExp(r'\b\d{1,2}[./]\d{1,2}[./](?:\d{4}|\d{2})\b')
-              .allMatches(trimmed)
-              .toList();
-          final remainder = dates.length == 1
-              ? trimmed.replaceFirst(dates.single.group(0)!, '')
-              : trimmed;
-          final amounts = RegExp(r'(?:₪\s*)?-?\d[\d,]*\.\d{2}(?:\s*₪)?')
-              .allMatches(remainder)
-              .toList();
-          if (dates.length == 1 && amounts.length == 1) {
-            final date = dates.single.group(0)!;
-            final amount = amounts.single.group(0)!;
-            final description = remainder.replaceFirst(amount, '').trim();
-            rows.add([date, description, amount]);
-          } else {
-            // Preserve unrecognised source text in the preview; never fabricate
-            // an amount from a line with multiple amounts or no date.
-            rows.add(['', trimmed, '']);
-          }
+          rows.add(parsePdfStatementLine(trimmed));
         }
       }
     } finally {

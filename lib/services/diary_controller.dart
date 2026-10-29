@@ -156,7 +156,10 @@ class DiaryController extends ChangeNotifier {
       now.day > horizonDay ? horizonDay : now.day,
     );
     final list = entries;
-    final ids = list.map((e) => '${e['id']}').toSet();
+    final ids = {
+      ...list.map((e) => '${e['id']}'),
+      ...((_data['deletedRecurringIds'] as List?) ?? []).map((id) => '$id'),
+    };
     final sources = list.where((e) => e['repeatMonthly'] == true).toList();
     var changed = false;
     for (final source in sources) {
@@ -203,14 +206,68 @@ class DiaryController extends ChangeNotifier {
   }
 
   Future<void> deleteEntry(String id) async {
+    await deleteEntries({id});
+  }
+
+  /// Remove selected entries in one vault write and remove dangling links.
+  Future<void> deleteEntries(Set<String> ids) async {
     _assertEditable();
-    final list = entries..removeWhere((e) => e['id'] == id);
+    if (ids.isEmpty) return;
+    final list = entries;
+    final recurringSources = list
+        .where((e) => e['repeatMonthly'] == true)
+        .map((e) => '${e['id']}:')
+        .toList();
+    final deletedRecurringIds = ((_data['deletedRecurringIds'] as List?) ?? [])
+        .map((id) => '$id')
+        .toSet();
+    deletedRecurringIds.addAll(
+      ids.where((id) => recurringSources.any(id.startsWith)),
+    );
+    _data['deletedRecurringIds'] = deletedRecurringIds.toList();
+    list.removeWhere((e) => ids.contains('${e['id']}'));
     for (final entry in list) {
       entry['linkedIds'] = (entry['linkedIds'] as List? ?? [])
-          .where((v) => v != id)
+          .where((v) => !ids.contains('$v'))
           .toList();
     }
     _data['entries'] = list;
+    await _save();
+  }
+
+  /// Change only the chosen entries, including their converted ILS amounts.
+  Future<void> setEntriesDirection(Set<String> ids, bool isExpense) async {
+    _assertEditable();
+    if (ids.isEmpty) return;
+    final list = entries;
+    for (final entry in list) {
+      if (!ids.contains('${entry['id']}')) continue;
+      for (final key in ['amount', 'amountIls']) {
+        final value = entry[key];
+        if (value is num) entry[key] = isExpense ? -value.abs() : value.abs();
+      }
+      entry['signUncertain'] = false;
+    }
+    _data['entries'] = list;
+    await _save();
+  }
+
+  /// Delete an account and its entries together; unrelated accounts remain intact.
+  Future<void> deleteAccount(String id) async {
+    _assertEditable();
+    final list = entries;
+    final removed = list
+        .where((e) => e['accountId'] == id)
+        .map((e) => '${e['id']}')
+        .toSet();
+    list.removeWhere((e) => removed.contains('${e['id']}'));
+    for (final entry in list) {
+      entry['linkedIds'] = (entry['linkedIds'] as List? ?? [])
+          .where((v) => !removed.contains('$v'))
+          .toList();
+    }
+    _data['entries'] = list;
+    _data['accounts'] = accounts..removeWhere((a) => a['id'] == id);
     await _save();
   }
 

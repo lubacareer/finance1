@@ -94,7 +94,13 @@ class _ImportScreenState extends State<ImportScreen> {
         currency = suggested?.currency;
         category = suggested?.category;
         summary = suggested?.cardSummary ?? false;
-        expense = false;
+        expense =
+            (suggested?.cardSummary ?? false) ||
+            widget.accounts.any(
+              (account) =>
+                  account['id'] == widget.accountId &&
+                  account['type'] == 'card',
+            );
       });
     } catch (_) {
       if (mounted) {
@@ -163,7 +169,7 @@ class _ImportScreenState extends State<ImportScreen> {
     final currencyController = TextEditingController(
       text: row['currency'] as String,
     );
-    final changed = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(t('Edit transaction')),
@@ -212,6 +218,7 @@ class _ImportScreenState extends State<ImportScreen> {
         ],
       ),
     );
+    final changed = await Navigator.of(context).push(route);
     var valid = false;
     if (changed == true) {
       final parsedDate = parseStatementDate(dateController.text);
@@ -220,9 +227,20 @@ class _ImportScreenState extends State<ImportScreen> {
           parsedAmount != null &&
           descriptionController.text.trim().isNotEmpty) {
         final newCurrency = currencyController.text.trim().toUpperCase();
+        final enteredAmount = amountController.text.trim();
+        final explicitSign =
+            enteredAmount.startsWith('+') ||
+            enteredAmount.startsWith('-') ||
+            enteredAmount.startsWith('−') ||
+            enteredAmount.endsWith('-') ||
+            enteredAmount.endsWith('+') ||
+            (enteredAmount.startsWith('(') && enteredAmount.endsWith(')'));
         setState(() {
           row['date'] = parsedDate.toIso8601String();
           row['amount'] = parsedAmount;
+          if (row['signUncertain'] == true && explicitSign) {
+            row['signUncertain'] = false;
+          }
           row['status'] = parsedDate.isAfter(DateTime.now())
               ? 'planned'
               : 'actual';
@@ -238,12 +256,23 @@ class _ImportScreenState extends State<ImportScreen> {
         );
       }
     }
+    // The pop result arrives before the closing animation removes the fields.
+    // Keep their controllers alive until the dialog route is fully disposed.
+    await route.completed;
     dateController.dispose();
     descriptionController.dispose();
     amountController.dispose();
     categoryController.dispose();
     currencyController.dispose();
     return valid;
+  }
+
+  void setDirection(Map<String, dynamic> row, bool isExpense) {
+    final value = row['amount'] as num;
+    row['amount'] = isExpense ? -value.abs() : value.abs();
+    final ils = row['amountIls'];
+    if (ils is num) row['amountIls'] = isExpense ? -ils.abs() : ils.abs();
+    row['signUncertain'] = false;
   }
 
   Widget columnPicker(
@@ -346,7 +375,12 @@ class _ImportScreenState extends State<ImportScreen> {
                 expense = value ?? false;
                 drafts = null;
               }),
-              title: Text(t('Amounts are expenses')),
+              title: Text(t('Unsigned amounts are expenses')),
+              subtitle: Text(
+                t(
+                  'Explicit plus and minus signs and debit/credit columns are preserved.',
+                ),
+              ),
             ),
             CheckboxListTile(
               value: summary,
@@ -388,6 +422,37 @@ class _ImportScreenState extends State<ImportScreen> {
                 'Check dates, amounts, signs and descriptions against the original statement.',
               ),
             ),
+            if (drafts!.any((row) => row['signUncertain'] == true))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  t(
+                    'Choose income or expense for every unclassified transaction before importing.',
+                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: () => setState(() {
+                    for (final row in drafts!) {
+                      setDirection(row, true);
+                    }
+                  }),
+                  child: Text(t('Mark all as expenses')),
+                ),
+                OutlinedButton(
+                  onPressed: () => setState(() {
+                    for (final row in drafts!) {
+                      setDirection(row, false);
+                    }
+                  }),
+                  child: Text(t('Mark all as income')),
+                ),
+              ],
+            ),
             if (matches.isNotEmpty)
               Text(
                 t(
@@ -413,13 +478,36 @@ class _ImportScreenState extends State<ImportScreen> {
                     '${row['description']}  •  ${row['amount']} ${row['currency']}',
                   ),
                   subtitle: Text(
-                    '${(row['date'] as String).split('T').first}  •  ${row['category']}',
+                    '${(row['date'] as String).split('T').first}  •  ${row['category']}  •  ${t(row['signUncertain'] == true
+                        ? 'Choose income or expense'
+                        : (row['amount'] as num) < 0
+                        ? 'Expense'
+                        : 'Income')}',
                   ),
                   onTap: () => edit(row),
-                  trailing: IconButton(
-                    tooltip: t('Remove'),
-                    icon: const Icon(Icons.close),
-                    onPressed: () => setState(() => drafts!.remove(row)),
+                  trailing: Wrap(
+                    spacing: 0,
+                    children: [
+                      PopupMenuButton<bool>(
+                        tooltip: t('Choose income or expense'),
+                        icon: Icon(
+                          row['signUncertain'] == true
+                              ? Icons.help_outline
+                              : Icons.swap_vert,
+                        ),
+                        onSelected: (value) =>
+                            setState(() => setDirection(row, value)),
+                        itemBuilder: (_) => [
+                          PopupMenuItem(value: false, child: Text(t('Income'))),
+                          PopupMenuItem(value: true, child: Text(t('Expense'))),
+                        ],
+                      ),
+                      IconButton(
+                        tooltip: t('Remove'),
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() => drafts!.remove(row)),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -447,7 +535,9 @@ class _ImportScreenState extends State<ImportScreen> {
               label: Text(t('Add missing transaction')),
             ),
             FilledButton(
-              onPressed: drafts!.isEmpty
+              onPressed:
+                  drafts!.isEmpty ||
+                      drafts!.any((row) => row['signUncertain'] == true)
                   ? null
                   : () async {
                       setState(() => loading = true);

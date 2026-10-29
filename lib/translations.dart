@@ -1,5 +1,28 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Unsigned amounts are expenses': 'סכומים ללא סימן הם הוצאות',
+    'Explicit plus and minus signs and debit/credit columns are preserved.':
+        'סימני פלוס ומינוס מפורשים ועמודות חובה וזכות נשמרים.',
+    'Choose income or expense for every unclassified transaction before importing.':
+        'יש לבחור הכנסה או הוצאה לכל תנועה שלא סווגה לפני הייבוא.',
+    'Mark all as expenses': 'סימון הכול כהוצאות',
+    'Mark all as income': 'סימון הכול כהכנסות',
+    'Choose income or expense': 'בחירת הכנסה או הוצאה',
+    'Expense': 'הוצאה',
+    'Mark shown as expenses': 'סימון התנועות המוצגות כהוצאות',
+    'Mark shown as income': 'סימון התנועות המוצגות כהכנסות',
+    'Change all shown transactions?': 'לשנות את כל התנועות המוצגות?',
+    'This changes all shown transactions. Filter the diary first if needed.': 'פעולה זו תשנה את כל התנועות המוצגות. אפשר לסנן את היומן תחילה לפי הצורך.',
+    'This changes every shown transaction. Filter first if only some should change.': 'פעולה זו תשנה את כל התנועות המוצגות. השתמשו בסינון תחילה אם ברצונכם לשנות רק חלק מהן.',
+    'Income or expense': 'הכנסה או הוצאה',
+    'Delete transactions': 'מחיקת תנועות',
+    'Delete all shown transactions?': 'למחוק את כל התנועות המוצגות?',
+    'This deletes the shown transactions from your diary.':
+        'פעולה זו תמחק את התנועות המוצגות מהיומן.',
+    'Delete account?': 'למחוק את החשבון?',
+    'This deletes the account and all its transactions.':
+        'פעולה זו תמחק את החשבון ואת כל התנועות שלו.',
+    'transactions': 'תנועות',
     'Financial Diary': 'יומן פיננסי',
     'Your financial diary': 'היומן הפיננסי שלך',
     'A clear view of today, a calmer tomorrow.':
@@ -138,7 +161,8 @@ const Map<String, Map<String, String>> translations = {
     'A statement may contain several cards. Remove rows that do not belong to this account.':
         'הדוח עשוי לכלול מספר כרטיסים. הסירו שורות שאינן שייכות לחשבון זה.',
     'Backup passcode': 'קוד גישה לגיבוי',
-    'Changes could not be saved. Check device storage and try again.': 'לא ניתן לשמור את השינויים. בדקו את שטח האחסון במכשיר ונסו שוב.',
+    'Changes could not be saved. Check device storage and try again.':
+        'לא ניתן לשמור את השינויים. בדקו את שטח האחסון במכשיר ונסו שוב.',
     'Could not update rates.': 'לא ניתן לעדכן את שערי החליפין.',
     'Retry': 'ניסיון חוזר',
     'Debit': 'חובה',
@@ -180,6 +204,28 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Unsigned amounts are expenses': 'Суммы без знака — это расходы',
+    'Explicit plus and minus signs and debit/credit columns are preserved.':
+        'Явные знаки плюс и минус и столбцы дебета и кредита сохраняются.',
+    'Choose income or expense for every unclassified transaction before importing.': 'Перед импортом выберите доход или расход для каждой нераспознанной операции.',
+    'Mark all as expenses': 'Отметить всё как расходы',
+    'Mark all as income': 'Отметить всё как доходы',
+    'Choose income or expense': 'Выберите доход или расход',
+    'Expense': 'Расход',
+    'Mark shown as expenses': 'Отметить показанные как расходы',
+    'Mark shown as income': 'Отметить показанные как доходы',
+    'Change all shown transactions?': 'Изменить все показанные операции?',
+    'This changes all shown transactions. Filter the diary first if needed.': 'Будут изменены все показанные операции. При необходимости сначала примените фильтр.',
+    'This changes every shown transaction. Filter first if only some should change.': 'Будут изменены все показанные операции. Если нужно изменить только некоторые, сначала примените фильтр.',
+    'Income or expense': 'Доход или расход',
+    'Delete transactions': 'Удалить операции',
+    'Delete all shown transactions?': 'Удалить все показанные операции?',
+    'This deletes the shown transactions from your diary.':
+        'Показанные операции будут удалены из дневника.',
+    'Delete account?': 'Удалить счёт?',
+    'This deletes the account and all its transactions.':
+        'Счёт и все его операции будут удалены.',
+    'transactions': 'операций',
     'Financial Diary': 'Финансовый дневник',
     'Your financial diary': 'Ваш финансовый дневник',
     'A clear view of today, a calmer tomorrow.':
@@ -337,7 +383,8 @@ const Map<String, Map<String, String>> translations = {
     'No complete transactions found. Check the mapping or add entries manually.': 'Полные операции не найдены. Проверьте сопоставление или добавьте операции вручную.',
     'Possible duplicates or related payments are marked below. Review them before saving.': 'Возможные дубликаты или связанные платежи отмечены ниже. Проверьте их перед сохранением.',
     'Possible match': 'Возможное совпадение',
-    'Possible matching card purchases': 'Возможные совпадающие покупки по карте',
+    'Possible matching card purchases':
+        'Возможные совпадающие покупки по карте',
     'Rates updated.': 'Курсы обновлены.',
     'Restore': 'Восстановить',
     'Select date, description and an amount or debit/credit column.':

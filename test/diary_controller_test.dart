@@ -75,6 +75,65 @@ void main() {
     expect(diary.accounts, hasLength(2));
   });
 
+  test('bulk and account deletion preserve other entries and links', () async {
+    await diary.putAccount({'id': 'bank', 'name': 'Bank', 'type': 'bank'});
+    await diary.putAccount({'id': 'card', 'name': 'Card', 'type': 'card'});
+    await diary.importEntries([
+      entry('bank1', 'bank', 'bank_payment'),
+      entry('bank2', 'bank', 'transaction'),
+      entry('card1', 'card', 'card_summary'),
+      entry('card2', 'card', 'transaction'),
+    ]);
+    await diary.link('bank1', 'card1');
+    await diary.deleteEntries({'bank2', 'card2'});
+    expect(diary.entries.map((e) => e['id']).toSet(), {'bank1', 'card1'});
+    await diary.deleteAccount('bank');
+    expect(diary.accounts.map((a) => a['id']), ['card']);
+    expect(diary.entries.single['id'], 'card1');
+    expect(diary.entries.single['linkedIds'], isEmpty);
+    await diary.lock();
+    await diary.unlock('synthetic-passphrase');
+    expect(diary.entries.single['id'], 'card1');
+  });
+
+  test(
+    'bulk correction changes only selected amounts and conversions',
+    () async {
+      await diary.putAccount({'id': 'card', 'name': 'Card', 'type': 'card'});
+      await diary.importEntries([
+        {
+          ...entry('first', 'card', 'transaction'),
+          'amount': 10.0,
+          'amountIls': 35.0,
+        },
+        {
+          ...entry('second', 'card', 'transaction'),
+          'amount': 20.0,
+          'amountIls': null,
+        },
+      ]);
+      await diary.setEntriesDirection({'first'}, true);
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == 'first')['amount'],
+        -10.0,
+      );
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == 'first')['amountIls'],
+        -35.0,
+      );
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == 'second')['amount'],
+        20.0,
+      );
+      await diary.lock();
+      await diary.unlock('synthetic-passphrase');
+      expect(
+        diary.entries.firstWhere((e) => e['id'] == 'first')['amount'],
+        -10.0,
+      );
+    },
+  );
+
   test('serializes rapid saves and restores encrypted backup', () async {
     await diary.putAccount({'id': 'a', 'name': 'Synthetic', 'type': 'bank'});
     final first = diary.putEntry(entry('one', 'a', 'transaction'));
@@ -202,6 +261,10 @@ void main() {
         diary.entries.map((e) => e['id']).toSet().length,
         diary.entries.length,
       );
+      await diary.deleteEntry('$changedId');
+      await diary.lock();
+      await diary.unlock('synthetic-passphrase');
+      expect(diary.entries.any((e) => e['id'] == changedId), isFalse);
       final futureDate = DateTime(now.year, now.month + 1, 1);
       await diary.putEntry({
         ...entry('future-source', 'a', 'transaction'),

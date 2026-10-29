@@ -7,13 +7,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('new diary prompts for a passcode and warns about recovery', (tester) async {
+  testWidgets('new diary prompts for a passcode and warns about recovery', (
+    tester,
+  ) async {
     final directory = Directory.systemTemp.createTempSync('diary-widget-');
     addTearDown(() => directory.deleteSync(recursive: true));
-    final controller = DiaryController(Vault(File('${directory.path}/test.vault')));
+    final controller = DiaryController(
+      Vault(File('${directory.path}/test.vault')),
+    );
     await tester.pumpWidget(DiaryApp(controller: controller, hasVault: false));
     expect(find.text('Create your private diary'), findsOneWidget);
-    expect(find.text('If you forget your passcode, your data cannot be recovered.'), findsOneWidget);
+    expect(
+      find.text('If you forget your passcode, your data cannot be recovered.'),
+      findsOneWidget,
+    );
     expect(find.byType(TextField), findsNWidgets(2));
     await tester.tap(find.text('Create diary'));
     await tester.pump();

@@ -305,6 +305,88 @@ class _HomeState extends State<Home> {
     if (result != null) await c.putAccount(result);
   }
 
+  Future<void> deleteTransactions(List<Map<String, dynamic>> rows) async {
+    if (rows.isEmpty) return;
+    final ids = rows.map((row) => '${row['id']}').toSet();
+    final single = rows.length == 1;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t(single ? 'Delete' : 'Delete all shown transactions?')),
+        content: Text(
+          single
+              ? '${rows.first['description']}\n${rows.first['date']} • ${rows.first['amount']} ${rows.first['currency']}'
+              : '${t('This deletes the shown transactions from your diary.')}\n\n${rows.length} ${t('transactions')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await c.deleteEntries(ids);
+  }
+
+  Future<void> markTransactions(
+    List<Map<String, dynamic>> rows, {
+    required bool isExpense,
+  }) async {
+    if (rows.isEmpty) return;
+    final ids = rows.map((row) => '${row['id']}').toSet();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('Change all shown transactions?')),
+        content: Text(
+          '${t('This changes all shown transactions. Filter the diary first if needed.')}\n\n${rows.length} ${t('transactions')}\n${t(isExpense ? 'Mark shown as expenses' : 'Mark shown as income')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('Save')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await c.setEntriesDirection(ids, isExpense);
+  }
+
+  Future<void> deleteAccount(Map<String, dynamic> account) async {
+    final count = c.entries
+        .where((row) => row['accountId'] == account['id'])
+        .length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('Delete account?')),
+        content: Text(
+          '${account['name']}\n\n${t('This deletes the account and all its transactions.')}\n$count ${t('transactions')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await c.deleteAccount('${account['id']}');
+  }
+
   Future<void> editEntry([Map<String, dynamic>? item]) async {
     if (c.accounts.isEmpty) {
       message(t('Create an account first'));
@@ -971,36 +1053,78 @@ class _HomeState extends State<Home> {
         .where((a) => a['id'] == e['accountId'])
         .firstOrNull;
     final amount = (e['amount'] as num?) ?? 0;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return InkWell(
+      key: ValueKey('entry-${e['id']}'),
       onTap: () => editEntry(e),
-      leading: CircleAvatar(
-        backgroundColor: pale,
-        child: Icon(
-          amount >= 0 ? Icons.south_west : Icons.north_east,
-          color: purple,
-        ),
-      ),
-      title: Text('${e['description']}'),
-      subtitle: Text(
-        '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''} • ${t(e['status'] == 'planned' ? 'Planned' : 'Actual')}',
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${amount >= 0 ? '+' : ''}${NumberFormat('#,##0.00').format(amount)} ${e['currency'] ?? 'ILS'}',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: amount >= 0 ? const Color(0xff16815f) : plum,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              backgroundColor: pale,
+              child: Icon(
+                amount >= 0 ? Icons.south_west : Icons.north_east,
+                color: purple,
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: t('Link transactions'),
-            icon: const Icon(Icons.link),
-            onPressed: () => manageLinks(e),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${e['description']}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '${'${e['date']}'.split('T').first} • ${account?['name'] ?? ''} • ${t(e['status'] == 'planned' ? 'Planned' : 'Actual')}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 112,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '${amount >= 0 ? '+' : ''}${NumberFormat('#,##0.00').format(amount)} ${e['currency'] ?? 'ILS'}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: amount >= 0 ? const Color(0xff16815f) : plum,
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: t('Link transactions'),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.link),
+                        onPressed: () => manageLinks(e),
+                      ),
+                      IconButton(
+                        tooltip: t('Delete'),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => deleteTransactions([e]),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1044,10 +1168,22 @@ class _HomeState extends State<Home> {
                 '${t(a['type'] == 'bank' ? 'Bank account' : 'Credit card')} • ${money(a['balance'] as num?)}',
               ),
               onTap: () => editAccount(a),
-              trailing: IconButton(
-                tooltip: t('Import statement'),
-                onPressed: () => importFile(a),
-                icon: const Icon(Icons.upload_file),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: t('Import statement'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => importFile(a),
+                    icon: const Icon(Icons.upload_file),
+                  ),
+                  IconButton(
+                    tooltip: t('Delete'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => deleteAccount(a),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1088,48 +1224,116 @@ class _HomeState extends State<Home> {
               icon: const Icon(Icons.upload_file),
               label: Text(t('Import statement')),
             ),
+            if (filtered.isNotEmpty)
+              TextButton.icon(
+                onPressed: () => deleteTransactions(filtered),
+                icon: const Icon(Icons.delete_sweep_outlined),
+                label: Text(t('Delete transactions')),
+              ),
           ],
         ),
         Wrap(
           spacing: 12,
           runSpacing: 12,
           children: [
-            DropdownButton<String>(
-              value: accountFilter,
-              items: [
-                DropdownMenuItem(value: 'all', child: Text(t('All accounts'))),
-                for (final a in c.accounts)
+            SizedBox(
+              width: 180,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: accountFilter,
+                items: [
                   DropdownMenuItem(
-                    value: '${a['id']}',
-                    child: Text('${a['name']}'),
+                    value: 'all',
+                    child: Text(
+                      t('All accounts'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-              ],
-              onChanged: (v) => setState(() => accountFilter = v ?? 'all'),
+                  for (final a in c.accounts)
+                    DropdownMenuItem(
+                      value: '${a['id']}',
+                      child: Text(
+                        '${a['name']}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => accountFilter = v ?? 'all'),
+              ),
             ),
-            DropdownButton<String>(
-              value: categoryFilter,
-              items: [
-                DropdownMenuItem(
-                  value: 'all',
-                  child: Text(t('All categories')),
-                ),
-                for (final category in categories)
-                  DropdownMenuItem(value: category, child: Text(category)),
-              ],
-              onChanged: (v) => setState(() => categoryFilter = v ?? 'all'),
+            SizedBox(
+              width: 180,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: categoryFilter,
+                items: [
+                  DropdownMenuItem(
+                    value: 'all',
+                    child: Text(
+                      t('All categories'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  for (final category in categories)
+                    DropdownMenuItem(
+                      value: category,
+                      child: Text(category, overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (v) => setState(() => categoryFilter = v ?? 'all'),
+              ),
             ),
-            DropdownButton<String>(
-              value: dateFilter,
-              items: [
-                DropdownMenuItem(value: 'all', child: Text(t('All dates'))),
-                DropdownMenuItem(value: 'month', child: Text(t('This month'))),
-                DropdownMenuItem(value: 'past', child: Text(t('Past'))),
-                DropdownMenuItem(value: 'future', child: Text(t('Future'))),
-              ],
-              onChanged: (v) => setState(() => dateFilter = v ?? 'all'),
+            SizedBox(
+              width: 180,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: dateFilter,
+                items: [
+                  DropdownMenuItem(
+                    value: 'all',
+                    child: Text(
+                      t('All dates'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'month',
+                    child: Text(
+                      t('This month'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'past',
+                    child: Text(t('Past'), overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 'future',
+                    child: Text(t('Future'), overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+                onChanged: (v) => setState(() => dateFilter = v ?? 'all'),
+              ),
             ),
           ],
         ),
+        if (filtered.isNotEmpty)
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: () => markTransactions(filtered, isExpense: true),
+                icon: const Icon(Icons.south_west),
+                label: Text(t('Mark shown as expenses')),
+              ),
+              TextButton.icon(
+                onPressed: () => markTransactions(filtered, isExpense: false),
+                icon: const Icon(Icons.north_east),
+                label: Text(t('Mark shown as income')),
+              ),
+            ],
+          ),
         surface(
           filtered.isEmpty
               ? empty(
@@ -1137,43 +1341,7 @@ class _HomeState extends State<Home> {
                   'Add a transaction or import a statement.',
                   Icons.receipt_long_outlined,
                 )
-              : Column(
-                  children: [
-                    for (final row in filtered)
-                      Dismissible(
-                        key: ValueKey(row['id']),
-                        direction: DismissDirection.endToStart,
-                        confirmDismiss: (_) async =>
-                            await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: Text(t('Delete')),
-                                content: Text('${row['description']}'),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: Text(t('Cancel')),
-                                  ),
-                                  FilledButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: Text(t('Delete')),
-                                  ),
-                                ],
-                              ),
-                            ) ??
-                            false,
-                        onDismissed: (_) => c.deleteEntry('${row['id']}'),
-                        background: Container(
-                          color: Colors.red.shade100,
-                          alignment: AlignmentDirectional.centerEnd,
-                          child: const Icon(Icons.delete_outline),
-                        ),
-                        child: entryTile(row),
-                      ),
-                  ],
-                ),
+              : Column(children: [for (final row in filtered) entryTile(row)]),
         ),
       ],
     );

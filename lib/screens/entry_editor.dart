@@ -163,6 +163,7 @@ class _EntryEditorState extends State<_EntryEditor> {
       _amountIls;
   late String? _account;
   late String _kind, _status;
+  late String _direction;
   late DateTime _date;
   late bool _repeatMonthly;
 
@@ -176,7 +177,13 @@ class _EntryEditorState extends State<_EntryEditor> {
     _category = TextEditingController(
       text: item?['category']?.toString() ?? '',
     );
-    _amount = TextEditingController(text: item?['amount']?.toString() ?? '');
+    final originalAmount = item?['amount'] as num?;
+    _direction = originalAmount != null && originalAmount >= 0
+        ? 'income'
+        : 'expense';
+    _amount = TextEditingController(
+      text: originalAmount?.abs().toString() ?? '',
+    );
     _currency = TextEditingController(
       text: item?['currency']?.toString() ?? 'ILS',
     );
@@ -185,7 +192,7 @@ class _EntryEditorState extends State<_EntryEditor> {
     _amountIls = TextEditingController(
       text: existingCurrency == 'ILS'
           ? ''
-          : (convertedAmount?.toString() ?? ''),
+          : (convertedAmount is num ? convertedAmount.abs().toString() : ''),
     );
     final id = item?['accountId']?.toString();
     _account = widget.accounts.any((a) => a['id'] == id)
@@ -274,15 +281,27 @@ class _EntryEditorState extends State<_EntryEditor> {
                   controller: _category,
                   decoration: InputDecoration(labelText: t('Category')),
                 ),
+                DropdownButtonFormField<String>(
+                  initialValue: _direction,
+                  decoration: InputDecoration(
+                    labelText: t('Income or expense'),
+                  ),
+                  items: [
+                    DropdownMenuItem(value: 'income', child: Text(t('Income'))),
+                    DropdownMenuItem(
+                      value: 'expense',
+                      child: Text(t('Expense')),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _direction = value ?? 'expense'),
+                ),
                 TextFormField(
                   controller: _amount,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
-                    signed: true,
                   ),
-                  decoration: InputDecoration(
-                    labelText: t('Amount (negative for expense)'),
-                  ),
+                  decoration: InputDecoration(labelText: t('Amount')),
                   validator: (v) =>
                       !_validNumber(v) ? t('Enter a valid number') : null,
                 ),
@@ -362,8 +381,16 @@ class _EntryEditorState extends State<_EntryEditor> {
         FilledButton(
           onPressed: () {
             if (!_form.currentState!.validate()) return;
-            final amount = double.parse(_amount.text.trim());
+            final magnitude = double.parse(_amount.text.trim()).abs();
+            final amount = _direction == 'expense' ? -magnitude : magnitude;
             final currency = _currency.text.trim().toUpperCase();
+            final convertedMagnitude = double.tryParse(_amountIls.text.trim())
+                ?.abs();
+            final convertedAmount = convertedMagnitude == null
+                ? null
+                : (_direction == 'expense'
+                      ? -convertedMagnitude
+                      : convertedMagnitude);
             Navigator.pop(context, <String, dynamic>{
               ...?widget.existing,
               'id': widget.existing?['id'] ?? _id(),
@@ -375,9 +402,7 @@ class _EntryEditorState extends State<_EntryEditor> {
                   : _category.text.trim(),
               'amount': amount,
               'currency': currency,
-              'amountIls': currency == 'ILS'
-                  ? amount
-                  : double.tryParse(_amountIls.text.trim()),
+              'amountIls': currency == 'ILS' ? amount : convertedAmount,
               'kind': _kind,
               'status': _status,
               'repeatMonthly': _repeatMonthly,
