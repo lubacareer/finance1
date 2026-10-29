@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/import_service.dart';
+import '../services/import_duplicates.dart';
 import '../services/currency.dart';
 import '../services/insights.dart';
 import '../services/manual_numbers.dart';
@@ -16,6 +18,7 @@ class ImportScreen extends StatefulWidget {
     required this.accountId,
     required this.tr,
     required this.onSave,
+    this.onSaveWithFilename,
     this.existing = const [],
     this.accounts = const [],
     this.parseFile,
@@ -24,6 +27,12 @@ class ImportScreen extends StatefulWidget {
   final String accountId;
   final String Function(String) tr;
   final Future<void> Function(List<Map<String, dynamic>>) onSave;
+  final Future<void> Function(
+    List<Map<String, dynamic>>,
+    String,
+    List<Map<String, dynamic>>,
+  )?
+  onSaveWithFilename;
   final List<Map<String, dynamic>> existing;
   final List<Map<String, dynamic>> accounts;
   final Future<ImportPreview> Function(Uint8List, String)? parseFile;
@@ -42,13 +51,35 @@ class _ImportScreenState extends State<ImportScreen> {
   int? date, description, amount, debit, credit, currency, category;
   List<Map<String, dynamic>>? drafts;
   List<Map<String, dynamic>> matches = [];
+  Map<String, Map<String, dynamic>> exactMatches = {};
+  final Map<String, String> duplicateChoices = {};
+
+  bool isSkipped(Map<String, dynamic> row) =>
+      exactMatches.containsKey('${row['id']}') &&
+      (duplicateChoices['${row['id']}'] ?? 'existing') == 'existing';
 
   void refreshMatches() {
     final current = drafts;
     if (current == null) {
       matches = [];
+      exactMatches = {};
+      duplicateChoices.clear();
       return;
     }
+    final previous = exactMatches;
+    final next = exactImportMatches(current, widget.existing);
+    for (final id in duplicateChoices.keys.toList()) {
+      if (next[id] == null || previous[id]?['id'] != next[id]?['id']) {
+        duplicateChoices.remove(id);
+      }
+    }
+    // Freeze the reviewed records so the controller can reject stale replacements.
+    exactMatches = next.map(
+      (id, row) => MapEntry(
+        id,
+        Map<String, dynamic>.from(jsonDecode(jsonEncode(row)) as Map),
+      ),
+    );
     matches = Insights.matchCandidates(
       [...widget.existing, ...current],
       accounts: widget.accounts,
@@ -604,6 +635,53 @@ class _ImportScreenState extends State<ImportScreen> {
                   ),
                 ),
               ),
+            for (final row in drafts!)
+              if (exactMatches.containsKey('${row['id']}'))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${t('Exact match already saved')}: '
+                        '${exactMatches['${row['id']}']!['description']} | ${(exactMatches['${row['id']}']!['date'] as String).split('T').first} | '
+                        '${exactMatches['${row['id']}']!['amount']} ${exactMatches['${row['id']}']!['currency']} | '
+                        '${t('Category')}: ${exactMatches['${row['id']}']!['category'] ?? t('Uncategorized')}',
+                      ),
+                      DropdownButtonFormField<String>(
+                        key: ValueKey(
+                          '${row['id']}-${exactMatches['${row['id']}']!['id']}-${duplicateChoices['${row['id']}'] ?? 'existing'}',
+                        ),
+                        initialValue:
+                            duplicateChoices['${row['id']}'] ?? 'existing',
+                        decoration: InputDecoration(
+                          labelText: t('Duplicate action'),
+                        ),
+                        items: [
+                          DropdownMenuItem(
+                            value: 'existing',
+                            child: Text(t('Keep existing; skip imported')),
+                          ),
+                          DropdownMenuItem(
+                            value: 'both',
+                            child: Text(t('Keep both transactions')),
+                          ),
+                          if (widget.onSaveWithFilename != null)
+                            DropdownMenuItem(
+                              value: 'replace',
+                              child: Text(t('Replace existing with imported')),
+                            ),
+                        ],
+                        onChanged: loading
+                            ? null
+                            : (value) => setState(() {
+                                duplicateChoices['${row['id']}'] =
+                                    value ?? 'existing';
+                              }),
+                      ),
+                    ],
+                  ),
+                ),
             OutlinedButton.icon(
               onPressed: () async {
                 final now = DateTime.now();
@@ -635,20 +713,78 @@ class _ImportScreenState extends State<ImportScreen> {
               onPressed:
                   loading ||
                       drafts!.isEmpty ||
-                      drafts!.any(
-                        (row) =>
-                            row['signUncertain'] == true ||
-                            row['currencyInvalid'] == true,
-                      )
+                      drafts!
+                          .where((row) => !isSkipped(row))
+                          .any(
+                            (row) =>
+                                row['signUncertain'] == true ||
+                                row['currencyInvalid'] == true,
+                          )
                   ? null
                   : () async {
+                      final replacements = <Map<String, dynamic>>[
+                        for (final row in drafts!)
+                          if (duplicateChoices['${row['id']}'] == 'replace' &&
+                              exactMatches.containsKey('${row['id']}'))
+                            exactMatches['${row['id']}']!,
+                      ];
+                      if (replacements.isNotEmpty) {
+                        final confirmationState = jsonEncode({
+                          'drafts': drafts,
+                          'matches': exactMatches,
+                          'choices': duplicateChoices,
+                        });
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: Text(t('Replace existing transactions?')),
+                            content: Text(
+                              t(
+                                'The selected existing transactions will be deleted and replaced by the imported rows.',
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: Text(t('Cancel')),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: Text(t('Replace')),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (!mounted || confirmed != true || loading) return;
+                        if (confirmationState !=
+                            jsonEncode({
+                              'drafts': drafts,
+                              'matches': exactMatches,
+                              'choices': duplicateChoices,
+                            })) {
+                          setState(
+                            () => error = t(
+                              'Review changed; please confirm again.',
+                            ),
+                          );
+                          return;
+                        }
+                      }
                       setState(() => loading = true);
                       try {
-                        await widget.onSave(
-                          drafts!
-                              .map((row) => Map<String, dynamic>.from(row))
-                              .toList(),
-                        );
+                        final rows = drafts!
+                            .where((row) => !isSkipped(row))
+                            .map((row) => Map<String, dynamic>.from(row))
+                            .toList();
+                        if (widget.onSaveWithFilename != null) {
+                          await widget.onSaveWithFilename!(
+                            rows,
+                            fileName ?? '',
+                            replacements,
+                          );
+                        } else {
+                          await widget.onSave(rows);
+                        }
                         if (context.mounted) Navigator.pop(context);
                       } catch (_) {
                         if (mounted) {

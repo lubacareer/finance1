@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -25,6 +26,7 @@ class DiaryController extends ChangeNotifier {
   bool get unlocked => vault.isUnlocked;
   List<Map<String, dynamic>> get accounts => _list('accounts');
   List<Map<String, dynamic>> get entries => _list('entries');
+  List<Map<String, dynamic>> get imports => _list('imports');
   List<String> get dismissedIds =>
       List<String>.from(_data['dismissedIds'] ?? []);
   String get language => (_data['language'] as String?) ?? 'en';
@@ -41,6 +43,7 @@ class DiaryController extends ChangeNotifier {
       'version': 1,
       'accounts': [],
       'entries': [],
+      'imports': [],
       'rates': <String, dynamic>{},
       'dismissedIds': [],
       'language': 'en',
@@ -147,6 +150,7 @@ class DiaryController extends ChangeNotifier {
     list.removeWhere((e) => e['id'] == entry['id']);
     list.add(entry);
     _data['entries'] = list;
+    if (old != null) _markImportedEdited({'${entry['id']}'});
     _extendRecurring();
     await _save();
   }
@@ -357,14 +361,61 @@ class DiaryController extends ChangeNotifier {
     _data['deletedRecurringSchedules'] = tombstones.toList();
   }
 
-  Future<void> importEntries(List<Map<String, dynamic>> imported) async {
+  void _markImportedEdited(Set<String> ids) {
+    final history = imports;
+    for (final batch in history) {
+      final batchIds = (batch['entryIds'] as List? ?? [])
+          .map((e) => '$e')
+          .toSet();
+      final edited = (batch['editedIds'] as List? ?? [])
+          .map((e) => '$e')
+          .toSet();
+      edited.addAll(ids.intersection(batchIds));
+      batch['editedIds'] = edited.toList();
+    }
+    _data['imports'] = history;
+  }
+
+  Future<void> importEntries(
+    List<Map<String, dynamic>> imported, {
+    String? fileName,
+    String? accountId,
+    List<Map<String, dynamic>> replacementRows = const [],
+  }) async {
     _assertEditable();
+    final current = {for (final row in entries) '${row['id']}': row};
+    for (final expected in replacementRows) {
+      final actual = current['${expected['id']}'];
+      if (actual == null || jsonEncode(actual) != jsonEncode(expected)) {
+        throw StateError(
+          'A transaction changed since review. Review it again.',
+        );
+      }
+    }
+    final replacementIds = replacementRows.map((row) => '${row['id']}').toSet();
+    if (replacementIds.isNotEmpty) _removeEntries(replacementIds);
     final list = entries;
     final ids = list.map((e) => e['id']).toSet();
+    final savedIds = <String>[];
     for (final row in imported) {
-      if (ids.add(row['id'])) list.add(row);
+      if (ids.add(row['id'])) {
+        list.add(row);
+        savedIds.add('${row['id']}');
+      }
     }
     _data['entries'] = list;
+    if (fileName != null && savedIds.isNotEmpty) {
+      final history = imports;
+      history.add({
+        'id': 'statement-${DateTime.now().microsecondsSinceEpoch}',
+        'accountId': accountId ?? '${imported.first['accountId']}',
+        'fileName': fileName,
+        'importedAt': DateTime.now().toIso8601String(),
+        'entryIds': savedIds,
+        'editedIds': <String>[],
+      });
+      _data['imports'] = history;
+    }
     _extendRecurring();
     await _save();
   }
@@ -377,6 +428,11 @@ class DiaryController extends ChangeNotifier {
   Future<void> deleteEntries(Set<String> ids) async {
     _assertEditable();
     if (ids.isEmpty) return;
+    _removeEntries(ids);
+    await _save();
+  }
+
+  void _removeEntries(Set<String> ids) {
     _extendRecurring();
     final list = entries;
     _recordRecurringDeletions(
@@ -390,6 +446,27 @@ class DiaryController extends ChangeNotifier {
     }
     _data['entries'] = list;
     _extendRecurring();
+  }
+
+  Future<void> deleteImport(String id) async {
+    _assertEditable();
+    final history = imports;
+    final batch = history.where((row) => row['id'] == id).firstOrNull;
+    if (batch == null) return;
+    _removeEntries((batch['entryIds'] as List? ?? []).map((e) => '$e').toSet());
+    _data['imports'] = history..removeWhere((row) => row['id'] == id);
+    await _save();
+  }
+
+  Future<void> clearAccountEntries(String accountId) async {
+    _assertEditable();
+    _extendRecurring();
+    final ids = entries
+        .where((row) => row['accountId'] == accountId)
+        .map((row) => '${row['id']}')
+        .toSet();
+    if (ids.isEmpty) return;
+    _removeEntries(ids);
     await _save();
   }
 
@@ -410,6 +487,7 @@ class DiaryController extends ChangeNotifier {
       entry['signUncertain'] = false;
     }
     _data['entries'] = list;
+    _markImportedEdited(ids);
     _extendRecurring();
     await _save();
   }

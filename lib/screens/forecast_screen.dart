@@ -149,7 +149,7 @@ class ForecastScreen extends StatelessWidget {
               );
             },
           ),
-        if (onLink != null && matches.isNotEmpty) ...[
+        if (onLink != null) ...[
           const SizedBox(height: 20),
           Text(
             tr('Possible duplicate or card payment'),
@@ -158,6 +158,7 @@ class ForecastScreen extends StatelessWidget {
           Text(
             tr('Review these suggestions before linking or removing anything.'),
           ),
+          if (matches.isEmpty) Text(tr('No matches to review.')),
           for (final match in matches)
             if (byId['${match['firstId']}'] != null &&
                 byId['${match['secondId']}'] != null)
@@ -167,13 +168,11 @@ class ForecastScreen extends StatelessWidget {
                     '${byId['${match['firstId']}']!['description']} / ${byId['${match['secondId']}']!['description']}',
                   ),
                   subtitle: Text(
-                    tr(
-                      match['type'] == 'duplicate'
-                          ? 'Possible duplicate'
-                          : match['type'] == 'summary_purchases'
-                          ? 'Possible matching card purchases'
-                          : 'Possible card payment',
-                    ),
+                    '${tr(match['type'] == 'duplicate'
+                        ? 'Possible duplicate'
+                        : match['type'] == 'summary_purchases'
+                        ? 'Possible matching card purchases'
+                        : 'Possible card payment')}\n${names['${byId['${match['firstId']}']!['accountId']}'] ?? ''} · ${byId['${match['firstId']}']!['date']} · ${byId['${match['firstId']}']!['amount']} ${byId['${match['firstId']}']!['currency'] ?? 'ILS'}\n${names['${byId['${match['secondId']}']!['accountId']}'] ?? ''} · ${byId['${match['secondId']}']!['date']} · ${byId['${match['secondId']}']!['amount']} ${byId['${match['secondId']}']!['currency'] ?? 'ILS'}',
                   ),
                   trailing: TextButton(
                     onPressed: () => onLink!(match),

@@ -388,4 +388,115 @@ void main() {
       expect(saved?.single['amountIls'], -12.5);
     },
   );
+
+  testWidgets('one matching saved row is skipped but repeated draft remains', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final originalPicker = FilePickerPlatform.instance;
+    FilePickerPlatform.instance = _FixturePicker(
+      _FixtureFile(
+        'Date,Description,Amount\n01/10/2026,Shop,-12.50\n01/10/2026,Shop,-12.50\n',
+      ),
+    );
+    addTearDown(() => FilePickerPlatform.instance = originalPicker);
+    List<Map<String, dynamic>>? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImportScreen(
+          accountId: 'bank',
+          tr: (s) => s,
+          onSave: (rows) async => saved = rows,
+          existing: [
+            {
+              'id': 'old',
+              'accountId': 'bank',
+              'date': '2026-10-01',
+              'description': 'Shop',
+              'amount': -12.5,
+              'currency': 'ILS',
+              'kind': 'transaction',
+            },
+          ],
+        ),
+      ),
+    );
+    await tester.tap(find.text('Choose a file'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Prepare review'));
+    await tester.tap(find.text('Prepare review'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Exact match already saved'), findsOneWidget);
+    await tester.ensureVisible(find.text('Confirm import'));
+    await tester.tap(find.text('Confirm import'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(1));
+    expect(saved!.single['description'], 'Shop');
+  });
+
+  testWidgets(
+    'replacement requires confirmation and passes the reviewed snapshot',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final originalPicker = FilePickerPlatform.instance;
+      FilePickerPlatform.instance = _FixturePicker(
+        _FixtureFile('Date,Description,Amount\n01/10/2026,Shop,-12.50\n'),
+      );
+      addTearDown(() => FilePickerPlatform.instance = originalPicker);
+      List<Map<String, dynamic>>? saved;
+      List<Map<String, dynamic>>? replacements;
+      String? filename;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImportScreen(
+            accountId: 'bank',
+            tr: (s) => s,
+            onSave: (_) async => fail('should use filename callback'),
+            onSaveWithFilename: (rows, name, old) async {
+              saved = rows;
+              filename = name;
+              replacements = old;
+            },
+            existing: [
+              {
+                'id': 'old',
+                'accountId': 'bank',
+                'date': '2026-10-01',
+                'description': 'Shop',
+                'amount': -12.5,
+                'currency': 'ILS',
+                'kind': 'transaction',
+              },
+            ],
+          ),
+        ),
+      );
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Prepare review'));
+      await tester.tap(find.text('Prepare review'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Keep existing; skip imported'));
+      await tester.tap(find.text('Keep existing; skip imported'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Replace existing with imported').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Confirm import'));
+      await tester.tap(find.text('Confirm import'));
+      await tester.pumpAndSettle();
+      expect(find.text('Replace existing transactions?'), findsOneWidget);
+      expect(saved, isNull);
+      await tester.tap(find.text('Replace'));
+      await tester.pumpAndSettle();
+      expect(saved, hasLength(1));
+      expect(filename, 'statement.csv');
+      expect(replacements!.single['id'], 'old');
+    },
+  );
 }

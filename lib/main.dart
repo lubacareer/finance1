@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,6 +11,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'screens/entry_editor.dart';
 import 'screens/forecast_screen.dart';
 import 'screens/import_screen.dart';
+import 'screens/import_history_screen.dart';
+import 'screens/match_review_dialog.dart';
 import 'services/diary_controller.dart';
 import 'services/insights.dart';
 import 'services/manual_numbers.dart';
@@ -465,6 +468,54 @@ class _HomeState extends State<Home> {
     if (confirmed == true) await c.deleteAccount('${account['id']}');
   }
 
+  Future<void> clearAccount(Map<String, dynamic> account) async {
+    final selectedIds = c.entries
+        .where((row) => row['accountId'] == account['id'])
+        .map((row) => '${row['id']}')
+        .toSet();
+    final count = selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('Clear all transactions?')),
+        content: Text(
+          '${account['name']}\n\n${t('This removes all imported and manual transactions in this account. The account and opening balance remain.')}\n$count ${t('transactions')}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('Clear transactions')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      final currentIds = c.entries
+          .where((row) => row['accountId'] == account['id'])
+          .map((row) => '${row['id']}')
+          .toSet();
+      if (currentIds.length != selectedIds.length ||
+          !currentIds.containsAll(selectedIds)) {
+        message(t('A transaction changed since review. Review it again.'));
+        return;
+      }
+      await c.clearAccountEntries('${account['id']}');
+    }
+  }
+
+  void importHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ImportHistoryScreen(controller: c, tr: t),
+      ),
+    );
+  }
+
   Future<void> editEntry([Map<String, dynamic>? item]) async {
     if (c.accounts.isEmpty) {
       message(t('Create an account first'));
@@ -522,6 +573,17 @@ class _HomeState extends State<Home> {
           tr: t,
           existing: c.entries,
           accounts: c.accounts,
+          onSaveWithFilename: (rows, fileName, replacementRows) async {
+            await c.importEntries(
+              rows,
+              fileName: fileName,
+              accountId: '${account!['id']}',
+              replacementRows: replacementRows,
+            );
+            if (rows.any((row) => row['amountIls'] == null)) {
+              unawaited(convertRates());
+            }
+          },
           onSave: (rows) async {
             await c.importEntries(rows);
             if (rows.any((row) => row['amountIls'] == null)) {
@@ -538,59 +600,45 @@ class _HomeState extends State<Home> {
     final first = list.where((e) => e['id'] == match['firstId']).firstOrNull;
     final second = list.where((e) => e['id'] == match['secondId']).firstOrNull;
     if (first == null || second == null) return;
-    final duplicate = match['type'] == 'duplicate';
     final matchedIds =
         (match['purchaseIds'] as List?)?.map((id) => '$id').toList() ??
         ['${second['id']}'];
-    final related = list
-        .where((row) => matchedIds.contains('${row['id']}'))
-        .toList();
-    final choice = await showDialog<bool>(
+    final choice = await showMatchReviewDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          t(duplicate ? 'Possible duplicate' : 'Possible card payment'),
-        ),
-        content: SingleChildScrollView(
-          child: Text(
-            [
-              '${first['date']}  ${first['description']}  ${first['amount']}',
-              ...related.map(
-                (row) =>
-                    '${row['date']}  ${row['description']}  ${row['amount']}',
-              ),
-            ].join('\n\n'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(t('Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(t(duplicate ? 'Delete' : 'Link payments')),
-          ),
-        ],
-      ),
+      match: match,
+      entries: list,
+      accounts: c.accounts,
+      tr: t,
     );
-    if (choice == true) {
-      if (duplicate) {
-        await c.deleteEntry('${second['id']}');
-      } else {
-        if (match['type'] == 'payment') {
-          for (final row in [first, second]) {
-            final account = c.accounts
-                .where((a) => a['id'] == row['accountId'])
-                .firstOrNull;
-            if (account?['type'] == 'bank' && row['kind'] == 'transaction') {
-              await c.putEntry({...row, 'kind': 'bank_payment'});
-            }
+    if (!mounted || choice == null) return;
+    final current = {for (final row in c.entries) '${row['id']}': row};
+    final involved = {'${first['id']}', ...matchedIds};
+    for (final id in involved) {
+      final old = list.where((row) => '${row['id']}' == id).firstOrNull;
+      if (old == null ||
+          current[id] == null ||
+          jsonEncode(old) != jsonEncode(current[id])) {
+        message(t('A transaction changed since review. Review it again.'));
+        return;
+      }
+    }
+    if (choice == MatchReviewAction.deleteFirst) {
+      await c.deleteEntry('${first['id']}');
+    } else if (choice == MatchReviewAction.deleteSecond) {
+      await c.deleteEntry('${second['id']}');
+    } else if (choice == MatchReviewAction.link) {
+      if (match['type'] == 'payment') {
+        for (final row in [first, second]) {
+          final account = c.accounts
+              .where((a) => a['id'] == row['accountId'])
+              .firstOrNull;
+          if (account?['type'] == 'bank' && row['kind'] == 'transaction') {
+            await c.putEntry({...row, 'kind': 'bank_payment'});
           }
         }
-        for (final id in matchedIds) {
-          await c.link('${first['id']}', id);
-        }
+      }
+      for (final id in matchedIds) {
+        await c.link('${first['id']}', id);
       }
     }
   }
@@ -1218,6 +1266,11 @@ class _HomeState extends State<Home> {
       heading(
         'Accounts',
         actions: [
+          OutlinedButton.icon(
+            onPressed: importHistory,
+            icon: const Icon(Icons.history),
+            label: Text(t('Import history')),
+          ),
           FilledButton.icon(
             onPressed: editAccount,
             icon: const Icon(Icons.add),
@@ -1265,6 +1318,12 @@ class _HomeState extends State<Home> {
                     visualDensity: VisualDensity.compact,
                     onPressed: () => deleteAccount(a),
                     icon: const Icon(Icons.delete_outline),
+                  ),
+                  IconButton(
+                    tooltip: t('Clear account transactions'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => clearAccount(a),
+                    icon: const Icon(Icons.delete_sweep_outlined),
                   ),
                 ],
               ),
