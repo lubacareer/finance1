@@ -97,6 +97,7 @@ void main() {
       expect(diary.balanceSnapshots, hasLength(1));
       expect(diary.debts, hasLength(1));
       expect(diary.workbookExports, hasLength(1));
+      expect(diary.workbookExports.single['formatVersion'], 2);
     },
   );
 

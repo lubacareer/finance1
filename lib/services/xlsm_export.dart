@@ -8,6 +8,7 @@ import 'package:xml/xml.dart';
 import 'diary_controller.dart';
 import 'insights.dart';
 import 'vba_integrity.dart';
+import 'workbook_locale.dart';
 
 /// The first row in each data sheet is a stable machine-readable schema.
 const transactionWorkbookColumns = <String>[
@@ -78,6 +79,7 @@ Future<Uint8List> buildDiaryXlsm({
   required List<Map<String, dynamic>> debts,
   required String exportId,
   required String Function(String) tr,
+  String language = 'en',
   bool rightToLeft = false,
   Uint8List? macroProject,
 }) async {
@@ -95,15 +97,18 @@ Future<Uint8List> buildDiaryXlsm({
   }
   verifyVbaProject(macro);
   final excel = Excel.createExcel();
-  final transactions = excel['_transactions'];
-  final balanceSheet = excel['_snapshots'];
-  final debtSheet = excel['_debts'];
-  final paymentSheet = excel['_debt_payments'];
+  String sheetName(String name) => workbookSheetName(language, name);
+  final transactionsName = sheetName('_transactions');
+  final transactions = excel[transactionsName];
+  final balanceSheet = excel[sheetName('_snapshots')];
+  final debtSheet = excel[sheetName('_debts')];
+  final paymentSheet = excel[sheetName('_debt_payments')];
   final manifest = excel['_manifest'];
-  final instructions = excel['_instructions'];
-  final columnGuide = excel['_column_guide'];
+  final instructions = excel[sheetName('_instructions')];
+  final columnGuide = excel[sheetName('_column_guide')];
+  final localeSheet = excel['_locale']..visibility = SheetVisibility.hidden;
   if (excel.tables.containsKey('Sheet1')) excel.delete('Sheet1');
-  excel.setDefaultSheet('_transactions');
+  excel.setDefaultSheet(transactionsName);
   for (final sheet in [
     transactions,
     balanceSheet,
@@ -112,6 +117,7 @@ Future<Uint8List> buildDiaryXlsm({
     manifest,
     instructions,
     columnGuide,
+    localeSheet,
   ]) {
     sheet.isRTL = rightToLeft;
   }
@@ -142,8 +148,11 @@ Future<Uint8List> buildDiaryXlsm({
     for (final key in columns)
       dates.contains(key) ? date(row[key]) : scalar(row[key]),
   ];
-  void headers(Sheet sheet, List<String> columns) {
-    sheet.appendRow([for (final column in columns) text(column)]);
+  void headers(Sheet sheet, List<String> columns, {bool technical = false}) {
+    sheet.appendRow([
+      for (final column in columns)
+        text(technical ? column : workbookHeader(language, column)),
+    ]);
     for (var i = 0; i < columns.length; i++) {
       sheet.setColumnWidth(i, 20);
       sheet
@@ -155,10 +164,23 @@ Future<Uint8List> buildDiaryXlsm({
   }
 
   headers(transactions, transactionWorkbookColumns);
+  // These computed helper columns are used by formulas, not edited by users.
+  transactions.setColumnHidden(24, true);
+  transactions.setColumnHidden(25, true);
   headers(balanceSheet, snapshotWorkbookColumns);
   headers(debtSheet, debtWorkbookColumns);
   headers(paymentSheet, debtPaymentWorkbookColumns);
-  headers(manifest, manifestWorkbookColumns);
+  headers(manifest, manifestWorkbookColumns, technical: true);
+  final localeRows = workbookLocaleRows(language);
+  for (var row = 0; row < localeRows.length; row++) {
+    for (var col = 0; col < localeRows[row].length; col++) {
+      localeSheet
+          .cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row))
+          .value = text(
+        localeRows[row][col],
+      );
+    }
+  }
   columnGuide.setColumnWidth(0, 24);
   columnGuide.setColumnWidth(1, 28);
   columnGuide.setColumnWidth(2, 32);
@@ -215,8 +237,8 @@ Future<Uint8List> buildDiaryXlsm({
   }.entries) {
     for (final column in spec.value) {
       columnGuide.appendRow([
-        text(spec.key),
-        text(column),
+        text(sheetName(spec.key)),
+        text(workbookHeader(language, column)),
         text(tr(fieldLabels[column] ?? column)),
       ]);
     }
@@ -274,8 +296,22 @@ Future<Uint8List> buildDiaryXlsm({
   for (final label in ['No transactions', 'No balance snapshots', 'No debts']) {
     instructions.appendRow([text(tr(label))]);
   }
+  instructions.appendRow([
+    text(
+      tr(
+        'Refresh stopped: a row has an unrecognized status, type or direction. Correct it and refresh again.',
+      ),
+    ),
+  ]);
+  for (final label in [
+    'Total income (actual)',
+    'Total expenses (actual)',
+    'Missing ILS conversions (actual)',
+  ]) {
+    instructions.appendRow([text(tr(label))]);
+  }
   manifest.appendRow([
-    const IntCellValue(1),
+    const IntCellValue(2),
     text(exportId),
     text('meta'),
     null,
@@ -287,12 +323,12 @@ Future<Uint8List> buildDiaryXlsm({
   final formulaValues = <String, Map<String, Object>>{};
   void cache(String sheet, String cell, Object value) =>
       (formulaValues[sheet] ??= {})[cell] = value;
-  String summaryStatus(Map<String, dynamic> row) =>
-      row['status'] == 'planned' && row['pending'] == true
-      ? 'pending'
-      : row['status'] == null || row['status'] == ''
-      ? 'actual'
-      : '${row['status']}';
+  String summaryStatus(Map<String, dynamic> row) {
+    final status = '${row['status'] ?? ''}'.trim();
+    if (status == 'planned' && row['pending'] == true) return 'pending';
+    return status.isEmpty ? 'actual' : status;
+  }
+
   num? effectiveIls(Map<String, dynamic> row) {
     final amount = row['amount'];
     if ('${row['currency'] ?? 'ILS'}'.toUpperCase() == 'ILS') {
@@ -319,8 +355,14 @@ Future<Uint8List> buildDiaryXlsm({
     copy['countsTowardSpending'] = Insights.countsAsSpending(row, allRows);
     copy['accountName'] = accountNames['${row['accountId']}'] ?? '';
     copy['currency'] ??= 'ILS';
-    cache('_transactions', 'Y$rowNumber', effectiveIls(copy) ?? '');
-    cache('_transactions', 'Z$rowNumber', summaryStatus(copy));
+    cache(transactionsName, 'Y$rowNumber', effectiveIls(copy) ?? '');
+    cache(transactionsName, 'Z$rowNumber', summaryStatus(copy));
+    for (final key in ['kind', 'status']) {
+      final value = copy[key];
+      if (value is String && value.isNotEmpty) {
+        copy[key] = workbookEnumLabel(language, 'entry.$key', value);
+      }
+    }
     final cells = values(copy, transactionWorkbookColumns, {
       'date',
       'rateDate',
@@ -331,11 +373,11 @@ Future<Uint8List> buildDiaryXlsm({
       'IF(J$rowNumber="ILS",I$rowNumber,IF(ISNUMBER(K$rowNumber),K$rowNumber,""))',
     );
     cells[25] = FormulaCellValue(
-      'IF(AND(G$rowNumber="planned",H$rowNumber=TRUE),"pending",IF(G$rowNumber="","actual",G$rowNumber))',
+      'IF(TRIM(G$rowNumber)="","actual",IF(AND(OR(TRIM(G$rowNumber)="planned",TRIM(G$rowNumber)=\'_locale\'!\$C\$11),H$rowNumber=TRUE),"pending",IF(OR(TRIM(G$rowNumber)="actual",TRIM(G$rowNumber)=\'_locale\'!\$C\$10),"actual",IF(OR(TRIM(G$rowNumber)="planned",TRIM(G$rowNumber)=\'_locale\'!\$C\$11),"planned",IF(OR(TRIM(G$rowNumber)="predicted",TRIM(G$rowNumber)=\'_locale\'!\$C\$12),"predicted",IF(OR(TRIM(G$rowNumber)="pending",TRIM(G$rowNumber)=\'_locale\'!\$C\$13),"pending",TRIM(G$rowNumber)))))))',
     );
     transactions.appendRow(cells);
     manifest.appendRow([
-      const IntCellValue(1),
+      const IntCellValue(2),
       text(exportId),
       text('entry'),
       text(row['id']),
@@ -345,9 +387,16 @@ Future<Uint8List> buildDiaryXlsm({
     yearFrom(row['date']);
     final copy = Map<String, dynamic>.from(row)
       ..['accountName'] = accountNames['${row['accountId']}'] ?? '';
+    if (copy['kind'] is String && (copy['kind'] as String).isNotEmpty) {
+      copy['kind'] = workbookEnumLabel(
+        language,
+        'snapshot.kind',
+        copy['kind'] as String,
+      );
+    }
     balanceSheet.appendRow(values(copy, snapshotWorkbookColumns, {'date'}));
     manifest.appendRow([
-      const IntCellValue(1),
+      const IntCellValue(2),
       text(exportId),
       text('snapshot'),
       text(row['id']),
@@ -355,7 +404,14 @@ Future<Uint8List> buildDiaryXlsm({
   }
   for (final row in debts) {
     yearFrom(row['date']);
-    debtSheet.appendRow(values(row, debtWorkbookColumns, {'date', 'dueDate'}));
+    final copy = Map<String, dynamic>.from(row);
+    for (final key in ['direction', 'status']) {
+      final value = copy[key];
+      if (value is String && value.isNotEmpty) {
+        copy[key] = workbookEnumLabel(language, 'debt.$key', value);
+      }
+    }
+    debtSheet.appendRow(values(copy, debtWorkbookColumns, {'date', 'dueDate'}));
     for (final item in (row['payments'] as List? ?? const [])) {
       if (item is! Map) throw ArgumentError('Invalid debt payment');
       final payment = Map<String, dynamic>.from(item)..['debtId'] = row['id'];
@@ -364,7 +420,7 @@ Future<Uint8List> buildDiaryXlsm({
       );
     }
     manifest.appendRow([
-      const IntCellValue(1),
+      const IntCellValue(2),
       text(exportId),
       text('debt'),
       text(row['id']),
@@ -410,7 +466,7 @@ Future<Uint8List> buildDiaryXlsm({
         final r = sheet.maxRows + 1;
         final nextYear = month == 12 ? year + 1 : year;
         final nextMonth = month == 12 ? 1 : month + 1;
-        final range = "'_transactions'!";
+        final range = "'${transactionsName.replaceAll("'", "''")}'!";
         String bounded(String col) =>
             '$range\$$col\$2:INDEX($range\$$col:\$$col,\$B\$1)';
         final dates = bounded('C');
@@ -512,6 +568,23 @@ Future<Uint8List> buildDiaryXlsm({
       if (monthRows.isEmpty) put(0, 14, text(tr('No transactions')));
       if (monthSnapshots.isEmpty) put(10, 14, text(tr('No balance snapshots')));
       if (monthDebts.isEmpty) put(20, 14, text(tr('No debts')));
+      // Keep the labels and totals beside the transaction list, separated by
+      // one blank row even when the section has only its empty-state message.
+      final footerRow = (monthRows.length > 1 ? monthRows.length + 16 : 17);
+      const footerLabels = [
+        'Total income (actual)',
+        'Total expenses (actual)',
+        'Missing ILS conversions (actual)',
+      ];
+      const footerSourceCells = ['B9', 'C9', 'E9'];
+      for (var i = 0; i < footerLabels.length; i++) {
+        put(0, footerRow + i - 1, text(tr(footerLabels[i])));
+        put(
+          5,
+          footerRow + i - 1,
+          FormulaCellValue('IF(\$B\$2=1,${footerSourceCells[i]},"")'),
+        );
+      }
       for (var i = 0; i < monthRows.length; i++) {
         final row = monthRows[i];
         putRow(0, i, [
@@ -519,19 +592,31 @@ Future<Uint8List> buildDiaryXlsm({
           text(accountNames['${row['accountId']}'] ?? ''),
           text(row['description']),
           text(row['category']),
-          text(summaryStatus(row)),
+          text(workbookEnumLabel(language, 'entry.status', summaryStatus(row))),
           scalar(row['amount']),
           text(row['currency'] ?? 'ILS'),
           scalar(effectiveIls(row)),
           scalar(Insights.countsAsSpending(row, allRows)),
-          text(row['kind']),
+          text(
+            row['kind'] == null
+                ? ''
+                : workbookEnumLabel(language, 'entry.kind', '${row['kind']}'),
+          ),
         ]);
       }
       for (var i = 0; i < monthSnapshots.length; i++) {
         final row = monthSnapshots[i];
         putRow(10, i, [
           date(row['date']),
-          text(row['kind']),
+          text(
+            row['kind'] == null
+                ? ''
+                : workbookEnumLabel(
+                    language,
+                    'snapshot.kind',
+                    '${row['kind']}',
+                  ),
+          ),
           text(accountNames['${row['accountId']}'] ?? ''),
           text(row['name']),
           scalar(row['remainingBalance']),
@@ -553,13 +638,29 @@ Future<Uint8List> buildDiaryXlsm({
         }
         putRow(20, i, [
           text(row['person']),
-          text(row['direction']),
+          text(
+            row['direction'] == null
+                ? ''
+                : workbookEnumLabel(
+                    language,
+                    'debt.direction',
+                    '${row['direction']}',
+                  ),
+          ),
           scalar(row['originalAmount']),
           scalar(total),
           scalar(DiaryController.debtRemaining(row)),
           date(row['date']),
           date(row['dueDate']),
-          text(row['status']),
+          text(
+            row['status'] == null
+                ? ''
+                : workbookEnumLabel(
+                    language,
+                    'debt.status',
+                    '${row['status']}',
+                  ),
+          ),
           text(row['currency']),
         ]);
       }
@@ -597,6 +698,11 @@ Future<Uint8List> buildDiaryXlsm({
         cache(name, 'C$r', expense);
         cache(name, 'D$r', income - expense);
         cache(name, 'E$r', missing);
+        if (i == 0) {
+          cache(name, 'F$footerRow', income);
+          cache(name, 'F${footerRow + 1}', expense);
+          cache(name, 'F${footerRow + 2}', missing);
+        }
       }
     }
   }

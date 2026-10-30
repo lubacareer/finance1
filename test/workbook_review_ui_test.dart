@@ -123,6 +123,7 @@ void main() {
       await diary.putEntry(fixture.entry);
       await diary.saveWorkbookExportManifest(
         'export-1',
+        formatVersion: 1,
         expectedGeneration: diary.workbookReviewSnapshot()['generation'] as int,
         entries: diary.entries,
         snapshots: [],
@@ -280,6 +281,7 @@ void main() {
         await diary.putBalanceSnapshot(original);
         await diary.saveWorkbookExportManifest(
           'export-1',
+          formatVersion: 1,
           expectedGeneration:
               diary.workbookReviewSnapshot()['generation'] as int,
           entries: [],
@@ -352,6 +354,7 @@ void main() {
         final token = diary.workbookReviewSnapshot()['generation'] as int;
         await diary.saveWorkbookExportManifest(
           'export-1',
+          formatVersion: 1,
           expectedGeneration: token,
           entries: [diary.entries.firstWhere((e) => e['id'] == 'e1')],
           snapshots: [],
@@ -402,6 +405,7 @@ void main() {
         await diary.putDebt(debt);
         await diary.saveWorkbookExportManifest(
           'export-1',
+          formatVersion: 1,
           expectedGeneration:
               diary.workbookReviewSnapshot()['generation'] as int,
           entries: [],

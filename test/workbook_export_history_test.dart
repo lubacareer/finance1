@@ -68,6 +68,7 @@ void main() {
     final generation = diary.workbookReviewSnapshot()['generation'] as int;
     await diary.saveWorkbookExportManifest(
       id,
+      formatVersion: 1,
       expectedGeneration: generation,
       entries: [fixture.entry],
       snapshots: [],

@@ -53,6 +53,7 @@ void main() {
       'workbookExports': [
         {
           'id': 'export-1',
+          'formatVersion': 2,
           'entries': [entry],
           'snapshots': [snap],
           'debts': [debt],

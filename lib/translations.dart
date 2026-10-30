@@ -1,5 +1,8 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Exchange rate': 'שער חליפין',
+    'Debt': 'חוב',
+    'Bank payment': 'תשלום בנקאי',
     'Export ID': 'מזהה ייצוא',
     'Workbook export history': 'היסטוריית ייצוא חוברות',
     'Delete export history?': 'למחוק את היסטוריית הייצוא?',
@@ -34,6 +37,10 @@ const Map<String, Map<String, String>> translations = {
     'No numbered monthly sheets were found.':
         'לא נמצאו גיליונות חודשיים ממוספרים.',
     'Refresh stopped: a data row has a missing or invalid date. Correct the date and refresh again.': 'הרענון נעצר: בשורת נתונים חסר תאריך או שהתאריך אינו תקין. תקנו את התאריך ורעננו שוב.',
+    'Refresh stopped: a row has an unrecognized status, type or direction. Correct it and refresh again.': 'הרענון נעצר: שורת נתונים מכילה מצב, סוג או כיוון לא מוכר. תקנו ורעננו שוב.',
+    'Total income (actual)': 'סך הכנסות בפועל',
+    'Total expenses (actual)': 'סך הוצאות בפועל',
+    'Missing ILS conversions (actual)': 'המרות לשקלים חסרות בפועל',
     'Debt payments to remove': 'תשלומי חוב להסרה',
     'To remove a debt, also remove its payment rows.':
         'כדי להסיר חוב, יש להסיר גם את שורות התשלומים שלו.',
@@ -584,6 +591,9 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Exchange rate': 'Обменный курс',
+    'Debt': 'Долг',
+    'Bank payment': 'Банковский платёж',
     'Export ID': 'Идентификатор экспорта',
     'Workbook export history': 'История экспорта книг',
     'Delete export history?': 'Удалить запись истории экспорта?',
@@ -625,6 +635,10 @@ const Map<String, Map<String, String>> translations = {
     'No numbered monthly sheets were found.':
         'Не найдены пронумерованные месячные листы.',
     'Refresh stopped: a data row has a missing or invalid date. Correct the date and refresh again.': 'Обновление остановлено: в строке данных отсутствует дата или она неверна. Исправьте дату и обновите сводки снова.',
+    'Refresh stopped: a row has an unrecognized status, type or direction. Correct it and refresh again.': 'Обновление остановлено: в строке указан неизвестный статус, тип или направление. Исправьте данные и обновите сводки снова.',
+    'Total income (actual)': 'Всего доходов (факт)',
+    'Total expenses (actual)': 'Всего расходов (факт)',
+    'Missing ILS conversions (actual)': 'Нет пересчёта в ILS (факт)',
     'Debt payments to remove': 'Платежи по долгу для удаления',
     'To remove a debt, also remove its payment rows.':
         'Чтобы удалить долг, удалите также строки его платежей.',

@@ -45,6 +45,7 @@ try:
     transactions.Range('J4').Value = 'ILS'
     snapshots = book.Worksheets('_snapshots')
     snapshots.Range('A3').Value = 'new-snapshot'
+    snapshots.Range('B3').Value = 'cash'
     snapshots.Range('D3').Value = 'March cash'
     snapshots.Range('E3').Value = 46082
     refresh()

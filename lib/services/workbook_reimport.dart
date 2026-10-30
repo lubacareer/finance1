@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:excel_plus/excel_plus.dart';
 
+import 'workbook_locale.dart';
+
 /// An explicit, independently reviewable change. Deletions are never applied
 /// until the user selects and separately confirms them in the UI.
 class WorkbookReimportChange {
@@ -107,8 +109,19 @@ Excel _decode(Uint8List bytes) {
 
 /// Reserved names select the strict reimport path even if the manifest is
 /// damaged, preventing a corrupted export from falling back to generic import.
-bool isDiaryExportWorkbook(Uint8List bytes) =>
-    _decode(bytes).tables.keys.any(_sheets.contains);
+bool isDiaryExportWorkbook(Uint8List bytes) {
+  final names = _decode(bytes).tables.keys.toSet();
+  if (names.contains('_locale') || names.any(_sheets.contains)) return true;
+  // Localized labels such as "Debts" can also occur in unrelated workbooks.
+  // Multiple localized data tabs still identify a damaged app export even if
+  // both reserved metadata tabs were removed.
+  return ['he', 'ru'].any((language) {
+    final matched = _sheets
+        .where((name) => name != '_manifest')
+        .where((name) => names.contains(workbookSheetName(language, name)));
+    return matched.length >= 2;
+  });
+}
 
 String _id(String kind) {
   final random = Random.secure();
@@ -131,8 +144,72 @@ dynamic _value(CellValue? value) {
   );
 }
 
-List<Map<String, dynamic>> _readSheet(Excel workbook, String name) {
-  final sheet = workbook.tables[name];
+/// The locale sheet is editable workbook data, not a source of truth. Verify
+/// it against the app's fixed registry before using it for any reimport.
+String? _workbookLocale(Excel workbook) {
+  final sheet = workbook.tables['_locale'];
+  if (sheet == null) return null; // Existing pre-localization exports.
+  final rows = sheet.rows;
+  if (rows.isEmpty || rows.first.length < 2) {
+    throw const FormatException('Invalid workbook language metadata.');
+  }
+  final locale = '${_value(rows.first[1]?.value) ?? ''}';
+  if (!['en', 'he', 'ru'].contains(locale)) {
+    throw const FormatException('Invalid workbook language metadata.');
+  }
+  final expected = workbookLocaleRows(locale);
+  final rowCount = rows.length > expected.length
+      ? rows.length
+      : expected.length;
+  for (var i = 0; i < rowCount; i++) {
+    final actual = i < rows.length ? rows[i] : <Data?>[];
+    final wanted = i < expected.length ? expected[i] : <String>[];
+    final cellCount = actual.length > wanted.length
+        ? actual.length
+        : wanted.length;
+    for (var j = 0; j < cellCount; j++) {
+      final got = j < actual.length ? _value(actual[j]?.value) : null;
+      final want = j < wanted.length ? wanted[j] : '';
+      if ((got ?? '') != want) {
+        throw const FormatException('Invalid workbook language metadata.');
+      }
+    }
+  }
+  return locale;
+}
+
+const _extraColumns = <String, List<String>>{
+  '_transactions': ['accountName', 'effectiveIls', 'summaryStatus'],
+  '_snapshots': ['accountName'],
+};
+
+Map<String, String> _enumGroups(String sheet) => switch (sheet) {
+  '_transactions' => {'kind': 'entry.kind', 'status': 'entry.status'},
+  '_snapshots' => {'kind': 'snapshot.kind'},
+  '_debts' => {'direction': 'debt.direction', 'status': 'debt.status'},
+  _ => <String, String>{},
+};
+
+List<Map<String, dynamic>> _readSheet(
+  Excel workbook,
+  String name,
+  String? locale,
+) {
+  final selectedName = locale == null || name == '_manifest'
+      ? name
+      : workbookSheetName(locale, name);
+  if (name != '_manifest') {
+    final aliases = {
+      name,
+      for (final language in ['en', 'he', 'ru'])
+        workbookSheetName(language, name),
+    };
+    if (aliases.where(workbook.tables.containsKey).length != 1 ||
+        !workbook.tables.containsKey(selectedName)) {
+      throw FormatException('Missing or ambiguous workbook sheet: $name');
+    }
+  }
+  final sheet = workbook.tables[selectedName];
   if (sheet == null || sheet.rows.isEmpty) {
     throw FormatException('Missing workbook sheet: $name');
   }
@@ -142,11 +219,19 @@ List<Map<String, dynamic>> _readSheet(Excel workbook, String name) {
       .toList();
   final required = _columns[name]!;
   final namedHeaders = header.where((name) => name.isNotEmpty).toList();
+  String label(String field) => locale == null || name == '_manifest'
+      ? field
+      : workbookHeader(locale, field);
+  final known = [...required, ...?_extraColumns[name]].map(label).toList();
   if (namedHeaders.toSet().length != namedHeaders.length ||
-      required.any((field) => !header.contains(field))) {
+      required.map(label).toSet().length != required.length ||
+      required.any((field) => !header.contains(label(field))) ||
+      (locale != null &&
+          name != '_manifest' &&
+          namedHeaders.any((field) => !known.contains(field)))) {
     throw FormatException('Invalid workbook columns: $name');
   }
-  final indices = {for (final key in required) key: header.indexOf(key)};
+  final indices = {for (final key in required) key: header.indexOf(label(key))};
   final output = <Map<String, dynamic>>[];
   for (final cells in rows.skip(1)) {
     final row = <String, dynamic>{};
@@ -156,6 +241,25 @@ List<Map<String, dynamic>> _readSheet(Excel workbook, String name) {
           : null;
     }
     if (row.values.every((value) => value == null || value == '')) continue;
+    if (locale != null) {
+      for (final item in _enumGroups(name).entries) {
+        final value = row[item.key];
+        if (value == null || value == '') continue;
+        if (value is! String) {
+          throw FormatException('Invalid workbook value: ${item.key}');
+        }
+        if (value.trim().isEmpty) {
+          row[item.key] = null;
+          continue;
+        }
+        final code = workbookEnumCode(locale, item.value, value.trim());
+        if (code == null ||
+            (item.value == 'entry.status' && code == 'pending')) {
+          throw FormatException('Invalid workbook value: ${item.key}');
+        }
+        row[item.key] = code;
+      }
+    }
     output.add(row);
   }
   return output;
@@ -204,13 +308,16 @@ WorkbookReimportPreview reviewWorkbookReimport(
   required Map<String, dynamic> snapshot,
 }) {
   final book = _decode(bytes);
-  final parsed = {for (final name in _sheets) name: _readSheet(book, name)};
+  final locale = _workbookLocale(book);
+  final parsed = {
+    for (final name in _sheets) name: _readSheet(book, name, locale),
+  };
   final meta = parsed['_manifest']!;
   if (meta.isEmpty) throw const FormatException('Missing export manifest.');
   final exportId = _string(meta.first['exportId']);
   final version = _string(meta.first['version']);
   if (exportId.isEmpty ||
-      version != '1' ||
+      !['1', '2'].contains(version) ||
       meta.any(
         (r) =>
             _string(r['exportId']) != exportId ||
@@ -224,6 +331,13 @@ WorkbookReimportPreview reviewWorkbookReimport(
     throw const FormatException('This export is not in this diary.');
   }
   final trusted = candidates.single;
+  final trustedVersion = _string(trusted['formatVersion'] ?? 1);
+  if (!['1', '2'].contains(trustedVersion) ||
+      version != trustedVersion ||
+      (version == '2' && locale == null) ||
+      (version == '1' && locale != null)) {
+    throw const FormatException('Invalid workbook format version.');
+  }
   const tableToKind = {
     'entries': 'entry',
     'snapshots': 'snapshot',
@@ -367,6 +481,17 @@ WorkbookReimportPreview reviewWorkbookReimport(
       for (final field in fields) {
         if (field == 'id') continue;
         var value = visible[field];
+        final group = _enumGroups(spec.key)[field];
+        final oldValue = old.value[field];
+        if (locale != null && group != null && oldValue is String) {
+          final oldCode = workbookEnumCode(locale, group, oldValue.trim());
+          if ((oldValue.trim().isEmpty && (value == null || value == '')) ||
+              (oldCode != null && oldCode == value)) {
+            // Preserve legacy spacing when the displayed classification has
+            // not actually changed. A real change still requires review.
+            continue;
+          }
+        }
         if (field == 'linkedIds') {
           try {
             value = value == null || value == ''

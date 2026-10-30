@@ -426,6 +426,7 @@ class DiaryController extends ChangeNotifier {
   Future<void> saveWorkbookExportManifest(
     String id, {
     required int expectedGeneration,
+    int formatVersion = 2,
     required List<Map<String, dynamic>> entries,
     required List<Map<String, dynamic>> snapshots,
     required List<Map<String, dynamic>> debts,
@@ -433,6 +434,9 @@ class DiaryController extends ChangeNotifier {
     _assertEditable();
     if (expectedGeneration != _generation) {
       throw StateError('The diary changed while the workbook was being saved.');
+    }
+    if (![1, 2].contains(formatVersion)) {
+      throw ArgumentError('Unsupported workbook export format.');
     }
     if (id.trim().isEmpty ||
         workbookExports.any((record) => record['id'] == id)) {
@@ -450,6 +454,7 @@ class DiaryController extends ChangeNotifier {
     result.add(
       _deepCopy({
         'id': id,
+        'formatVersion': formatVersion,
         'createdAt': _clock().toIso8601String(),
         'entries': entries,
         'snapshots': snapshots,

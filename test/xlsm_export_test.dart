@@ -52,6 +52,7 @@ void main() {
           'id': 'd1',
           'person': 'Alice',
           'direction': 'owed',
+          'status': 'open',
           'date': '2026-01-02',
           'originalAmount': 10,
           'currency': 'ILS',

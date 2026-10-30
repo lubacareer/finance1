@@ -34,6 +34,7 @@ class _ExportDiary extends DiaryController {
   Future<void> saveWorkbookExportManifest(
     String id, {
     required int expectedGeneration,
+    int formatVersion = 2,
     required List<Map<String, dynamic>> entries,
     required List<Map<String, dynamic>> snapshots,
     required List<Map<String, dynamic>> debts,

@@ -431,6 +431,7 @@ class _HomeState extends State<Home> {
         16,
         (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
       ).join();
+      final exportLanguage = c.language;
       final bytes = await buildDiaryXlsm(
         filteredRows: rows,
         allRows: allRows,
@@ -438,8 +439,9 @@ class _HomeState extends State<Home> {
         snapshots: snapshots,
         debts: debts,
         exportId: exportId,
-        tr: t,
-        rightToLeft: c.language == 'he',
+        tr: (label) => translate(exportLanguage, label),
+        language: exportLanguage,
+        rightToLeft: exportLanguage == 'he',
       );
       final saved = await FilePicker.saveFile(
         fileName: 'financial-diary.xlsm',
@@ -452,6 +454,7 @@ class _HomeState extends State<Home> {
           await c.saveWorkbookExportManifest(
             exportId,
             expectedGeneration: snapshot['generation'] as int,
+            formatVersion: 2,
             entries: rows,
             snapshots: snapshots,
             debts: debts,

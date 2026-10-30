@@ -4,7 +4,7 @@
 exported workbooks. `vbaProject.bin` was compiled in desktop Excel from that
 source in a new, disposable blank workbook. Its SHA-256 is:
 
-`2b888864730b6f116c1c79c1feb1068725dbc77f2030f8d5b8a022215ab29bf3`
+`c6b620f409b38ced029cc85bd71724e884f75c44805cdd5514d4cef3b464aaf2`
 
 The canonical checksum is in `lib/services/vba_integrity.dart`, and is also
 recorded beside the asset in `pubspec.yaml`. The app checks the complete binary
