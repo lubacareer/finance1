@@ -22,6 +22,8 @@ migrate_working_dir/
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
 #.vscode/
+# Keep machine-specific user overrides local; share the portable workspace file.
+/.vscode/settings.json
 
 # Flutter/Dart/Pub related
 **/doc/api/
@@ -32,6 +34,8 @@ migrate_working_dir/
 .pub/
 /build/
 /android/build/
+/vendor/flutter_tesseract_ocr/android/.gradle/
+/vendor/flutter_tesseract_ocr/android/build/
 /android/.kotlin/
 /coverage/
 
@@ -53,6 +57,7 @@ app.*.map.json
 *.pdf
 *.xls
 *.xlsx
+*.xlsm
 *.vault
 
 # Android release signing material

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -14,8 +15,33 @@ class _ExportDiary extends DiaryController {
   _ExportDiary({this.empty = false})
     : super(Vault(File('unused-export-ui-vault')));
   final bool empty;
+  int manifestSaves = 0;
   @override
   bool get unlocked => true;
+  @override
+  List<Map<String, dynamic>> get balanceSnapshots => [];
+  @override
+  List<Map<String, dynamic>> get debts => [];
+  @override
+  Map<String, dynamic> workbookReviewSnapshot() => {
+    'generation': 0,
+    'accounts': accounts,
+    'entries': entries,
+    'balanceSnapshots': balanceSnapshots,
+    'debts': debts,
+  };
+  @override
+  Future<void> saveWorkbookExportManifest(
+    String id, {
+    required int expectedGeneration,
+    int formatVersion = 2,
+    required List<Map<String, dynamic>> entries,
+    required List<Map<String, dynamic>> snapshots,
+    required List<Map<String, dynamic>> debts,
+  }) async {
+    manifestSaves++;
+  }
+
   @override
   List<Map<String, dynamic>> get accounts => [
     {'id': 'bank', 'name': 'Bank A', 'type': 'bank', 'balance': 0},
@@ -105,7 +131,7 @@ void main() {
   testWidgets(
     'exports only rows visible with account category and date filters',
     (tester) async {
-      final picker = _SavePicker()..result = Uri.file('synthetic.xlsx');
+      final picker = _SavePicker()..result = Uri.file('synthetic.xlsm');
       await mount(tester, _ExportDiary(), picker);
       await tester.tap(find.text('All accounts'));
       await tester.pumpAndSettle();
@@ -126,15 +152,15 @@ void main() {
       await tester.tap(find.text('Export to Excel (unencrypted)'));
       await tester.pumpAndSettle();
       expect(picker.calls, 1);
-      expect(picker.savedName, 'financial-diary.xlsx');
+      expect(picker.savedName, 'financial-diary.xlsm');
       expect(
         picker.savedMime,
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel.sheet.macroEnabled.12',
       );
       final book = Excel.decodeBytes(picker.savedBytes!);
-      final sheet = book.tables['Transactions']!;
+      final sheet = book.tables['_transactions']!;
       expect(sheet.rows, hasLength(2));
-      expect(sheet.rows[1][2]!.value.toString(), 'Selected row');
+      expect(sheet.rows[1][3]!.value.toString(), 'Selected row');
       expect(find.text('Excel file saved.'), findsOneWidget);
     },
   );
@@ -152,10 +178,12 @@ void main() {
 
   testWidgets('cancel is silent and save failure is visible', (tester) async {
     final picker = _SavePicker();
-    await mount(tester, _ExportDiary(), picker);
+    final diary = _ExportDiary();
+    await mount(tester, diary, picker);
     await tester.tap(find.text('Export to Excel (unencrypted)'));
     await tester.pumpAndSettle();
     expect(picker.calls, 1);
+    expect(diary.manifestSaves, 0);
     expect(find.text('Excel file saved.'), findsNothing);
     expect(find.text('Could not save the Excel file.'), findsNothing);
     picker.fail = true;
@@ -179,10 +207,43 @@ void main() {
       expect(tester.widget<TextButton>(button).onPressed, isNull);
       expect(picker.calls, 1);
       await tester.pumpWidget(const SizedBox.shrink());
-      picker.gate!.complete(Uri.file('synthetic.xlsx'));
+      picker.gate!.complete(Uri.file('synthetic.xlsm'));
       await tester.pump();
       await tester.pump();
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('integrity failure is visible before saving', (tester) async {
+    final picker = _SavePicker();
+    final diary = _ExportDiary();
+    await mount(tester, diary, picker);
+    final original = File('assets/vba/vbaProject.bin').readAsBytesSync();
+    final changed = Uint8List.fromList(original)..[original.length - 1] ^= 1;
+    tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+      'flutter/assets',
+      (message) async {
+        if (message != null &&
+            utf8.decode(message.buffer.asUint8List()) ==
+                'assets/vba/vbaProject.bin') {
+          return ByteData.sublistView(changed);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+        'flutter/assets',
+        null,
+      ),
+    );
+    await tester.tap(find.text('Export to Excel (unencrypted)'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Workbook macro integrity check failed; export unavailable.'),
+      findsOneWidget,
+    );
+    expect(picker.calls, 0);
+    expect(diary.manifestSaves, 0);
+  });
 }

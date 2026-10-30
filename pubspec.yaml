@@ -45,6 +45,8 @@ dependencies:
   file_picker: ^13.3.0
   pdfrx: ^2.10.1
   excel_plus: ^2.29.1
+  archive: ^4.5.2
+  xml: ^7.0.1
   html: ^0.15.7
   csv: ^8.0.0
   http: ^1.6.0
@@ -76,6 +78,10 @@ flutter:
   assets:
     - assets/tessdata_config.json
     - assets/tessdata/
+    # Compiled in desktop Excel from assets/vba/FinancialDiary.bas. Verify source
+    # with tool/verify_vba_source.py as described in assets/vba/README.md.
+    # SHA-256: c6b620f409b38ced029cc85bd71724e884f75c44805cdd5514d4cef3b464aaf2
+    - assets/vba/vbaProject.bin
 
   # To add assets to your application, add an assets section, like this:
   # assets:
