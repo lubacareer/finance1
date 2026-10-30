@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_tesseract_ocr/flutter_tesseract_ocr.dart';
 import 'package:html/parser.dart' as html;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -127,8 +126,7 @@ class _OcrWord {
 }
 
 /// Local OCR for image-only PDF pages. No document content is sent to a server.
-/// Windows uses only the integrity-checked bundled engine. Android uses the
-/// bundled plugin and language models.
+/// Windows uses only the integrity-checked bundled engine and language models.
 class OcrService {
   OcrService() : _windowsBundleRoot = null, _temporaryDirectory = null;
 
@@ -203,7 +201,6 @@ class OcrService {
   }
 
   Future<bool> get available async {
-    if (Platform.isAndroid) return true;
     if (Platform.isWindows) return await _windowsExecutable() != null;
     return false;
   }
@@ -245,9 +242,9 @@ class OcrService {
     PdfPage page, {
     required bool positioned,
   }) async {
-    if (!Platform.isAndroid && !Platform.isWindows) return null;
-    final exe = Platform.isWindows ? await _windowsExecutable() : null;
-    if (Platform.isWindows && exe == null) {
+    if (!Platform.isWindows) return null;
+    final exe = await _windowsExecutable();
+    if (exe == null) {
       throw const OcrUnavailableException();
     }
     final image = await page.render(
@@ -276,24 +273,8 @@ class OcrService {
         png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
         flush: true,
       );
-      if (Platform.isAndroid) {
-        if (positioned) {
-          final result = await FlutterTesseractOcr.extractHocr(
-            input.path,
-            language: 'heb+eng+rus',
-            args: {'psm': '6', 'preserve_interword_spaces': '1'},
-          );
-          return (result, image.width, image.height);
-        }
-        final result = await FlutterTesseractOcr.extractText(
-          input.path,
-          language: 'heb+eng+rus',
-          args: {'psm': '6', 'preserve_interword_spaces': '1'},
-        );
-        return (result, image.width, image.height);
-      }
       final models = await _modelsDirectory();
-      final engine = File(exe!);
+      final engine = File(exe);
       final modelFiles = [
         for (final name in OcrIntegrity.modelHashes.keys)
           File('${models.path}${Platform.pathSeparator}$name.traineddata'),

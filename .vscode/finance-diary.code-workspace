@@ -3,17 +3,11 @@
     { "path": ".." }
   ],
   "settings": {
-    "java.import.exclusions": [
-      "**/node_modules/**",
-      "**/.metadata/**",
-      "**/archetype-resources/**",
-      "**/META-INF/maven/**",
-      "**/vendor/flutter_tesseract_ocr",
-      "**/vendor/flutter_tesseract_ocr/**"
-    ],
-    "java.server.launchMode": "Standard",
-    "java.import.gradle.enabled": true,
+    "java.server.launchMode": "LightWeight",
+    "java.import.gradle.enabled": false,
+    "java.import.maven.enabled": false,
+    "gradle.autoDetect": "off",
     "gradle.allowParallelRun": false,
-    "gradle.nestedProjects": ["android"]
+    "gradle.nestedProjects": false
   }
 }
