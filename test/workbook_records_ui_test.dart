@@ -47,6 +47,53 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('snapshot titles use nonblank names and appropriate fallbacks', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await diary.putAccount({
+        'id': 'linked',
+        'name': 'Current bank',
+        'type': 'bank',
+      });
+      await diary.putAccount({
+        'id': 'removed',
+        'name': 'Former bank',
+        'type': 'bank',
+      });
+      for (final row in [
+        {'id': 'named', 'kind': 'cash', 'name': ' My wallet '},
+        {
+          'id': 'linked',
+          'kind': 'account',
+          'name': '   ',
+          'accountId': 'linked',
+        },
+        {
+          'id': 'removed',
+          'kind': 'account',
+          'name': '',
+          'accountId': 'removed',
+        },
+        {'id': 'no-account', 'kind': 'account', 'name': ''},
+        {'id': 'no-cash', 'kind': 'cash', 'name': '  '},
+      ]) {
+        await diary.putBalanceSnapshot({
+          ...row,
+          'date': '2026-01-02',
+          'currency': 'ILS',
+        });
+      }
+      await diary.deleteAccount('removed');
+    });
+    await mount(tester);
+    expect(find.text('My wallet'), findsOneWidget);
+    expect(find.text('Current bank'), findsOneWidget);
+    expect(find.text('Former bank'), findsOneWidget);
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('Cash'), findsOneWidget);
+  });
+
   testWidgets(
     'snapshot payments and balance survive edit and delete confirmation',
     (tester) async {

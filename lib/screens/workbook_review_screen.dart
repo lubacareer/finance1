@@ -555,7 +555,7 @@ class _WorkbookReviewScreenState extends State<WorkbookReviewScreen> {
                     .whereType<Map>()) {
               if (!newIds.contains('${payment['id']}')) {
                 removedPayments.add(
-                  '${row['person']}: ${payment['date']} ? ${payment['amount']}',
+                  '${row['person']}: ${'${payment['date'] ?? ''}'.split(RegExp(r'[T ]')).first} • ${payment['amount']}',
                 );
               }
             }

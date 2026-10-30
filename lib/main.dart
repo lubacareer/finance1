@@ -16,6 +16,7 @@ import 'screens/import_history_screen.dart';
 import 'screens/match_review_dialog.dart';
 import 'screens/move_card_account_dialog.dart';
 import 'screens/workbook_records_screen.dart';
+import 'screens/workbook_export_history_screen.dart';
 import 'screens/workbook_review_screen.dart';
 import 'services/card_identity.dart';
 import 'services/diary_controller.dart';
@@ -1447,6 +1448,17 @@ class _HomeState extends State<Home> {
             onPressed: importHistory,
             icon: const Icon(Icons.history),
             label: Text(t('Import history')),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    WorkbookExportHistoryScreen(controller: c, tr: t),
+              ),
+            ),
+            icon: const Icon(Icons.file_present_outlined),
+            label: Text(t('Workbook export history')),
           ),
           OutlinedButton.icon(
             onPressed: importWorkbook,

@@ -90,6 +90,10 @@ void main() {
       expect(january.rows[13][23]!.value.toString(), contains('Category'));
       expect(january.rows[8][1]!.value, isA<FormulaCellValue>());
       expect(
+        (january.rows[8][4]!.value as FormulaCellValue).formula,
+        contains('"",'),
+      );
+      expect(
         book.tables['_transactions']!.rows[1][3]!.value,
         isA<TextCellValue>(),
       );

@@ -46,6 +46,30 @@ try:
     assert sheet.Range('B2').Value == 0
     assert 'unverified links' in sheet.Range('A3').Value
     transactions.Range('V4').ClearContents()
+    # Formula-empty ILS conversions count by month and status, for both signs.
+    for index, date, amount, status, pending in [
+        (5, 46024, 10, 'actual', False),
+        (6, 46024, -11, 'actual', False),
+        (7, 46024, -12, 'planned', False),
+        (8, 46024, 13, 'planned', True),
+        (9, 46054, -14, 'actual', False),  # February 2026
+        (10, 46024, 0, 'actual', False),
+        (11, 46024, 15, 'actual', False),
+    ]:
+        transactions.Cells(index, 3).Value = date
+        transactions.Cells(index, 4).Value = 'Synthetic foreign transaction'
+        transactions.Cells(index, 7).Value = status
+        transactions.Cells(index, 8).Value = pending
+        transactions.Cells(index, 9).Value = amount
+        transactions.Cells(index, 10).Value = 'USD'
+    transactions.Cells(11, 11).Value = 55  # Known conversion.
+    refresh()
+    assert sheet.Range('E9').Value == 2
+    assert sheet.Range('E10').Value == 1
+    assert sheet.Range('E11').Value == 1
+    assert sheet.Range('E12').Value == 0
+    assert book.Worksheets('2026-02').Range('E9').Value == 1
+    transactions.Range('A5:AA11').ClearContents()
     transactions.Range('C4').Value = 50000  # Outside the exported years.
     refresh()
     assert sheet.Range('B2').Value == 0

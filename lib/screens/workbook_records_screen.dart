@@ -131,7 +131,20 @@ class WorkbookRecordsScreen extends StatelessWidget {
             Card(
               child: ListTile(
                 title: Text(
-                  '${row['name'] ?? controller.accounts.where((a) => a['id'] == row['accountId']).map((a) => a['name']).firstOrNull ?? tr('Cash')}',
+                  [
+                        row['name'],
+                        controller.accounts
+                            .where((a) => a['id'] == row['accountId'])
+                            .map((a) => a['name'])
+                            .firstOrNull,
+                        row['formerAccountName'],
+                      ]
+                      .map((v) => '${v ?? ''}'.trim())
+                      .firstWhere(
+                        (v) => v.isNotEmpty,
+                        orElse: () =>
+                            tr(row['kind'] == 'account' ? 'Account' : 'Cash'),
+                      ),
                 ),
                 subtitle: Text(
                   '${row['date']} • ${tr('Remaining balance')}: ${row['remainingBalance'] ?? '—'} ${row['currency'] ?? 'ILS'} • ${tr('Debt')}: ${snapshotDebt(row) ?? '—'}',

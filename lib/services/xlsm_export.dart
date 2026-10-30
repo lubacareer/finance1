@@ -399,7 +399,7 @@ Future<Uint8List> buildDiaryXlsm({
           ),
           FormulaCellValue('IF(\$B\$2=1,B$r-C$r,"")'),
           FormulaCellValue(
-            'IF(\$B\$2=1,COUNTIFS($criteria,$ils,"=",$signed,"<>0"),"")',
+            'IF(\$B\$2=1,COUNTIFS($criteria,$ils,"",$signed,"<>0"),"")',
           ),
         ]);
       }

@@ -177,7 +177,7 @@ Failed:
     For Each sheet In ThisWorkbook.Worksheets
         If sheet.Name Like "####-##" Then
             sheet.Range("B2").Value = 0
-            sheet.Range("A3").Value = "Refresh failed; check workbook data."
+            sheet.Range("A3").Value = ThisWorkbook.Worksheets("_instructions").Range("A4").Value
         End If
     Next sheet
     Application.ScreenUpdating = True

@@ -219,7 +219,7 @@ void main() {
         'status': 'open',
         'currency': 'ILS',
         'payments': [
-          {'id': 'p1', 'date': '2026-01-03', 'amount': 25},
+          {'id': 'p1', 'date': '2026-01-03T14:15:16.000', 'amount': 25},
         ],
       };
       await tester.runAsync(() async {
@@ -254,6 +254,8 @@ void main() {
       await tester.tap(find.text('Save reviewed changes'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Debt payments to remove: 1'), findsOneWidget);
+      expect(find.textContaining('Example: 2026-01-03 • 25'), findsOneWidget);
+      expect(find.textContaining('2026-01-03T14:15:16'), findsNothing);
       await tester.tap(find.text('Cancel').last);
       await tester.pumpAndSettle();
       expect((diary.debts.single['payments'] as List), hasLength(1));

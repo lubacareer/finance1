@@ -39,6 +39,19 @@ class DiaryController extends ChangeNotifier {
   List<Map<String, dynamic>> get workbookExports =>
       _list('workbookExports').map(_deepCopy).toList();
 
+  /// History summaries do not copy the potentially large exported baselines.
+  List<Map<String, dynamic>> get workbookExportHistory => [
+    for (final export in _list('workbookExports'))
+      {
+        'id': export['id'],
+        'createdAt': export['createdAt'],
+        'entryCount': (export['entries'] as List? ?? []).length,
+        'snapshotCount': (export['snapshots'] as List? ?? []).length,
+        'debtCount': (export['debts'] as List? ?? []).length,
+        'generation': _generation,
+      },
+  ];
+
   /// Explicit overrides win; missing snapshot inputs stay missing, not zero.
   static num? snapshotDebt(Map<String, dynamic> snapshot) {
     final override = snapshot['debt'];
@@ -444,6 +457,26 @@ class DiaryController extends ChangeNotifier {
       }),
     );
     _data['workbookExports'] = result;
+    await _save();
+  }
+
+  /// Forget a single exported baseline after explicit user confirmation.
+  /// The corresponding workbook will no longer be eligible for reimport.
+  Future<void> deleteWorkbookExportManifest(
+    String id, {
+    required int expectedGeneration,
+  }) async {
+    _assertEditable();
+    if (expectedGeneration != _generation) {
+      throw StateError('The diary changed while export history was reviewed.');
+    }
+    final existing = _list('workbookExports');
+    if (!existing.any((row) => row['id'] == id)) {
+      throw StateError('Unknown workbook export.');
+    }
+    _data['workbookExports'] = existing
+        .where((row) => row['id'] != id)
+        .toList();
     await _save();
   }
 

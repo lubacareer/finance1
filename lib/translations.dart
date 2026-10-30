@@ -1,5 +1,14 @@
 const Map<String, Map<String, String>> translations = {
   'he': {
+    'Export ID': 'מזהה ייצוא',
+    'Workbook export history': 'היסטוריית ייצוא חוברות',
+    'Delete export history?': 'למחוק את היסטוריית הייצוא?',
+    'The associated workbook can no longer be reimported. Your diary entries and exported file will not be deleted.': 'לא ניתן יהיה לייבא שוב את החוברת המשויכת. רשומות היומן והקובץ שיוצא לא יימחקו.',
+    'Could not save export history. Retry the pending save.': 'לא ניתן לשמור את היסטוריית הייצוא. נסו שוב לשמור את השינויים הממתינים.',
+    'Export history changed. Review it again.':
+        'היסטוריית הייצוא השתנתה. בדקו אותה שוב.',
+    'Export history is kept in your encrypted diary and backups. Keeping more exports increases their size.': 'היסטוריית הייצוא נשמרת ביומן המוצפן ובגיבויים. שמירת ייצואים נוספים מגדילה את גודלם.',
+    'No saved exports yet': 'אין עדיין ייצואים שמורים',
     'Repeat monthly': 'חזרה חודשית',
     'Missing workbook sheet: {sheet}': 'חסר גיליון בחוברת: {sheet}',
     'Invalid workbook columns: {sheet}': 'עמודות לא תקינות בגיליון: {sheet}',
@@ -566,6 +575,15 @@ const Map<String, Map<String, String>> translations = {
         'עמוד {page} נקרא בזיהוי תווים; בדקו אותו היטב מול המקור.',
   },
   'ru': {
+    'Export ID': 'Идентификатор экспорта',
+    'Workbook export history': 'История экспорта книг',
+    'Delete export history?': 'Удалить запись истории экспорта?',
+    'The associated workbook can no longer be reimported. Your diary entries and exported file will not be deleted.': 'Повторно импортировать связанную книгу больше не получится. Записи дневника и экспортированный файл не будут удалены.',
+    'Could not save export history. Retry the pending save.': 'Не удалось сохранить историю экспорта. Повторите сохранение ожидающих изменений.',
+    'Export history changed. Review it again.':
+        'История экспорта изменилась. Проверьте её снова.',
+    'Export history is kept in your encrypted diary and backups. Keeping more exports increases their size.': 'История экспорта хранится в зашифрованном дневнике и резервных копиях. Большее число экспортов увеличивает их размер.',
+    'No saved exports yet': 'Сохранённых экспортов пока нет',
     'Repeat monthly': 'Повторять ежемесячно',
     'Missing workbook sheet: {sheet}': 'Отсутствует лист книги: {sheet}',
     'Invalid workbook columns: {sheet}':
