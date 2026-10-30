@@ -57,7 +57,9 @@ class _AccountEditorState extends State<_AccountEditor> {
     final item = widget.existing;
     _name = TextEditingController(text: item?['name']?.toString() ?? '');
     _balance = TextEditingController(text: item?['balance']?.toString() ?? '');
-    _type = item?['type'] == 'card' ? 'card' : 'bank';
+    _type = const ['bank', 'card', 'cash'].contains(item?['type'])
+        ? '${item!['type']}'
+        : 'bank';
   }
 
   @override
@@ -99,6 +101,7 @@ class _AccountEditorState extends State<_AccountEditor> {
                       value: 'card',
                       child: Text(t('Credit card')),
                     ),
+                    DropdownMenuItem(value: 'cash', child: Text(t('Cash'))),
                   ],
                   onChanged: (v) => setState(() => _type = v ?? 'bank'),
                 ),

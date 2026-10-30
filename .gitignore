@@ -53,6 +53,7 @@ app.*.map.json
 *.pdf
 *.xls
 *.xlsx
+*.xlsm
 *.vault
 
 # Android release signing material

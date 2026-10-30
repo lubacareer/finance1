@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -14,10 +15,12 @@ import 'screens/import_screen.dart';
 import 'screens/import_history_screen.dart';
 import 'screens/match_review_dialog.dart';
 import 'screens/move_card_account_dialog.dart';
+import 'screens/workbook_records_screen.dart';
+import 'screens/workbook_review_screen.dart';
 import 'services/card_identity.dart';
 import 'services/diary_controller.dart';
 import 'services/diary_filter.dart';
-import 'services/excel_export.dart';
+import 'services/xlsm_export.dart';
 import 'services/insights.dart';
 import 'services/manual_numbers.dart';
 import 'services/ocr_service.dart';
@@ -391,24 +394,73 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> exportExcel(List<Map<String, dynamic>> shown) async {
-    if (exportingExcel || shown.isEmpty) return;
+    if (exportingExcel || c.lastSaveError != null) return;
     setState(() => exportingExcel = true);
     try {
-      final bytes = buildDiaryWorkbook(
-        filteredRows: shown,
-        allRows: c.entries,
-        accounts: c.accounts,
+      final snapshot = c.workbookReviewSnapshot();
+      List<Map<String, dynamic>> freeze(List<Map<String, dynamic>> rows) =>
+          (jsonDecode(jsonEncode(rows)) as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+      final rows = freeze(shown);
+      final allRows = (snapshot['entries'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      final accounts = (snapshot['accounts'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      final snapshots = freeze(
+        filterWorkbookRecords(
+          (snapshot['balanceSnapshots'] as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
+        ),
+      );
+      final debts = freeze(
+        filterWorkbookRecords(
+          (snapshot['debts'] as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
+        ),
+      );
+      if (rows.isEmpty && snapshots.isEmpty && debts.isEmpty) return;
+      final random = math.Random.secure();
+      final exportId = List.generate(
+        16,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+      final bytes = await buildDiaryXlsm(
+        filteredRows: rows,
+        allRows: allRows,
+        accounts: accounts,
+        snapshots: snapshots,
+        debts: debts,
+        exportId: exportId,
         tr: t,
         rightToLeft: c.language == 'he',
       );
       final saved = await FilePicker.saveFile(
-        fileName: 'financial-diary.xlsx',
+        fileName: 'financial-diary.xlsm',
         bytes: bytes,
-        mimeType:
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
         dialogTitle: t('Export to Excel (unencrypted)'),
       );
-      if (saved != null) message(t('Excel file saved.'));
+      if (saved != null) {
+        try {
+          await c.saveWorkbookExportManifest(
+            exportId,
+            expectedGeneration: snapshot['generation'] as int,
+            entries: rows,
+            snapshots: snapshots,
+            debts: debts,
+          );
+          message(t('Excel file saved.'));
+        } catch (_) {
+          message(
+            t('Excel file saved, but its reimport record could not be saved.'),
+          );
+        }
+      }
     } catch (_) {
       message(t('Could not save the Excel file.'));
     } finally {
@@ -416,9 +468,32 @@ class _HomeState extends State<Home> {
     }
   }
 
+  List<Map<String, dynamic>> filterWorkbookRecords(
+    List<Map<String, dynamic>> records,
+  ) => filterDiaryEntries(
+    records,
+    accountId: accountFilter,
+    dateFilter: dateFilter,
+    rangeStart: diaryDateRange?.start,
+    rangeEnd: diaryDateRange?.end,
+  );
+
   Future<void> editAccount([Map<String, dynamic>? item]) async {
     final result = await showAccountEditor(context, existing: item, tr: t);
     if (result != null) await c.putAccount(result);
+  }
+
+  void importWorkbook() {
+    if (c.lastSaveError != null) {
+      message(t('Save pending changes before continuing.'));
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => WorkbookReviewScreen(controller: c, tr: t),
+      ),
+    );
   }
 
   Future<void> deleteTransactions(List<Map<String, dynamic>> rows) async {
@@ -1249,13 +1324,15 @@ class _HomeState extends State<Home> {
         child: Icon(
           a['type'] == 'bank'
               ? Icons.account_balance_outlined
+              : a['type'] == 'cash'
+              ? Icons.payments_outlined
               : Icons.credit_card,
           color: purple,
         ),
       ),
       title: Text('${a['name']}', maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        a['type'] == 'bank' ? money(a['balance'] as num?) : t('Credit card'),
+        a['type'] == 'card' ? t('Credit card') : money(a['balance'] as num?),
       ),
     ),
   );
@@ -1357,9 +1434,24 @@ class _HomeState extends State<Home> {
         'Accounts',
         actions: [
           OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => WorkbookRecordsScreen(controller: c, tr: t),
+              ),
+            ),
+            icon: const Icon(Icons.balance_outlined),
+            label: Text(t('Balances and debts')),
+          ),
+          OutlinedButton.icon(
             onPressed: importHistory,
             icon: const Icon(Icons.history),
             label: Text(t('Import history')),
+          ),
+          OutlinedButton.icon(
+            onPressed: importWorkbook,
+            icon: const Icon(Icons.table_view_outlined),
+            label: Text(t('Import workbook')),
           ),
           FilledButton.icon(
             onPressed: editAccount,
@@ -1385,13 +1477,19 @@ class _HomeState extends State<Home> {
                 child: Icon(
                   a['type'] == 'bank'
                       ? Icons.account_balance_outlined
+                      : a['type'] == 'cash'
+                      ? Icons.payments_outlined
                       : Icons.credit_card,
                   color: purple,
                 ),
               ),
               title: Text('${a['name']}'),
               subtitle: Text(
-                '${t(a['type'] == 'bank' ? 'Bank account' : 'Credit card')} • ${money(a['balance'] as num?)}',
+                '${t(a['type'] == 'bank'
+                    ? 'Bank account'
+                    : a['type'] == 'cash'
+                    ? 'Cash'
+                    : 'Credit card')} • ${money(a['balance'] as num?)}',
               ),
               onTap: () => editAccount(a),
               trailing: Row(
@@ -1482,7 +1580,12 @@ class _HomeState extends State<Home> {
               label: Text(t('Import statement')),
             ),
             TextButton.icon(
-              onPressed: filtered.isEmpty || exportingExcel
+              onPressed:
+                  (filtered.isEmpty &&
+                          filterWorkbookRecords(c.balanceSnapshots).isEmpty &&
+                          filterWorkbookRecords(c.debts).isEmpty) ||
+                      exportingExcel ||
+                      c.lastSaveError != null
                   ? null
                   : () => exportExcel(filtered),
               icon: const Icon(Icons.table_view_outlined),

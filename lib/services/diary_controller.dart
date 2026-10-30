@@ -30,6 +30,52 @@ class DiaryController extends ChangeNotifier {
   List<Map<String, dynamic>> get entries => _list('entries');
   List<Map<String, dynamic>> get imports => _list('imports');
 
+  /// Workbook records and export baselines are stored inside the encrypted vault.
+  /// Nested values are copied so callers cannot mutate diary state without a save.
+  List<Map<String, dynamic>> get balanceSnapshots =>
+      _list('balanceSnapshots').map(_deepCopy).toList();
+  List<Map<String, dynamic>> get debts =>
+      _list('debts').map(_deepCopy).toList();
+  List<Map<String, dynamic>> get workbookExports =>
+      _list('workbookExports').map(_deepCopy).toList();
+
+  /// Explicit overrides win; missing snapshot inputs stay missing, not zero.
+  static num? snapshotDebt(Map<String, dynamic> snapshot) {
+    final override = snapshot['debt'];
+    if (override is num && override.isFinite) return override;
+    final balance = snapshot['remainingBalance'];
+    final paid = snapshot['payments'];
+    if (balance is! num ||
+        paid is! num ||
+        !balance.isFinite ||
+        !paid.isFinite) {
+      return null;
+    }
+    final value = balance - paid;
+    return value.isFinite ? value : null;
+  }
+
+  /// Negative values show overpayment; they are not silently clamped away.
+  static num? debtRemaining(Map<String, dynamic> debt) {
+    final override = debt['remainingBalance'];
+    if (override is num && override.isFinite) return override;
+    final original = debt['originalAmount'];
+    final payments = debt['payments'] ?? [];
+    if (original is! num || !original.isFinite || payments is! List) {
+      return null;
+    }
+    num result = original;
+    for (final payment in payments) {
+      if (payment is! Map ||
+          payment['amount'] is! num ||
+          !(payment['amount'] as num).isFinite) {
+        return null;
+      }
+      result -= payment['amount'] as num;
+    }
+    return result.isFinite ? result : null;
+  }
+
   /// Previously confirmed mappings are suggestions, never automatic assignments.
   List<Map<String, dynamic>> get cardMappings => _list('cardMappings');
   List<String> get dismissedIds =>
@@ -49,6 +95,9 @@ class DiaryController extends ChangeNotifier {
       'accounts': [],
       'entries': [],
       'imports': [],
+      'balanceSnapshots': [],
+      'debts': [],
+      'workbookExports': [],
       'cardMappings': [],
       'rates': <String, dynamic>{},
       'dismissedIds': [],
@@ -118,6 +167,479 @@ class DiaryController extends ChangeNotifier {
     }
 
     return Map<String, dynamic>.from(copy(input) as Map);
+  }
+
+  /// Capture the displayed data and generation before opening a picker or
+  /// review dialog. A later save rejects if the diary changed in the meantime.
+  Map<String, dynamic> workbookReviewSnapshot() {
+    _assertEditable();
+    return _deepCopy({
+      'generation': _generation,
+      'accounts': accounts,
+      'entries': entries,
+      'balanceSnapshots': balanceSnapshots,
+      'debts': debts,
+      'workbookExports': workbookExports,
+      'imports': imports,
+      'cardMappings': cardMappings,
+    });
+  }
+
+  String _recordId(Map<String, dynamic> row) {
+    final id = row['id'];
+    if (id is! String || id.trim().isEmpty) {
+      throw ArgumentError('A record needs a stable ID.');
+    }
+    return id;
+  }
+
+  void _validDate(Object? value, String name, {bool optional = false}) {
+    if (optional && (value == null || value == '')) return;
+    if (value is! String || DateTime.tryParse(value) == null) {
+      throw ArgumentError('Invalid $name.');
+    }
+  }
+
+  void _finiteFields(Map<String, dynamic> row, Iterable<String> fields) {
+    for (final field in fields) {
+      final value = row[field];
+      if (value != null && (value is! num || !value.isFinite)) {
+        throw ArgumentError('Invalid $field.');
+      }
+    }
+  }
+
+  void _validateAccountReference(
+    Map<String, dynamic> row,
+    List<Map<String, dynamic>> currentAccounts,
+  ) {
+    final accountId = row['accountId'];
+    if (accountId != null &&
+        (accountId is! String ||
+            !currentAccounts.any((account) => account['id'] == accountId))) {
+      throw ArgumentError('Unknown account.');
+    }
+  }
+
+  Map<String, dynamic> _validatedSnapshot(
+    Map<String, dynamic> input,
+    List<Map<String, dynamic>> currentAccounts,
+  ) {
+    final row = _deepCopy(input);
+    _recordId(row);
+    if (!['cash', 'account'].contains(row['kind'])) {
+      throw ArgumentError('Invalid balance snapshot kind.');
+    }
+    _validDate(row['date'], 'snapshot date');
+    _validateAccountReference(row, currentAccounts);
+    _finiteFields(row, [
+      'remainingBalance',
+      'fromBank',
+      'payments',
+      'otherBalance',
+      'debt',
+    ]);
+    final currency = normalizeCurrency('${row['currency'] ?? 'ILS'}');
+    if (currency == null) throw ArgumentError('Invalid snapshot currency.');
+    row['currency'] = currency;
+    return row;
+  }
+
+  Map<String, dynamic> _validatedDebt(
+    Map<String, dynamic> input,
+    List<Map<String, dynamic>> currentAccounts,
+  ) {
+    final row = _deepCopy(input);
+    _recordId(row);
+    if (row['person'] is! String ||
+        (row['person'] as String).trim().isEmpty ||
+        !['owed', 'receivable'].contains(row['direction']) ||
+        !['open', 'paid'].contains(row['status'])) {
+      throw ArgumentError('Invalid debt details.');
+    }
+    _validDate(row['date'], 'debt date');
+    _validDate(row['dueDate'], 'due date', optional: true);
+    _validateAccountReference(row, currentAccounts);
+    _finiteFields(row, ['originalAmount', 'remainingBalance']);
+    final original = row['originalAmount'];
+    if (original is! num || original <= 0) {
+      throw ArgumentError('Invalid debt amount.');
+    }
+    final currency = normalizeCurrency('${row['currency'] ?? 'ILS'}');
+    if (currency == null) throw ArgumentError('Invalid debt currency.');
+    row['currency'] = currency;
+    final payments = row['payments'] ?? <dynamic>[];
+    if (payments is! List) throw ArgumentError('Invalid debt payments.');
+    final paymentIds = <String>{};
+    for (final raw in payments) {
+      if (raw is! Map) throw ArgumentError('Invalid debt payment.');
+      final payment = Map<String, dynamic>.from(raw);
+      if (!paymentIds.add(_recordId(payment))) {
+        throw ArgumentError('Duplicate debt payment.');
+      }
+      _validDate(payment['date'], 'payment date');
+      final amount = payment['amount'];
+      if (amount is! num || !amount.isFinite || amount <= 0) {
+        throw ArgumentError('Invalid debt payment amount.');
+      }
+    }
+    row['payments'] = payments;
+    return row;
+  }
+
+  Map<String, dynamic> _validatedWorkbookEntry(
+    Map<String, dynamic> input,
+    List<Map<String, dynamic>> currentAccounts, {
+    Map<String, dynamic>? old,
+  }) {
+    final row = _deepCopy(input);
+    _recordId(row);
+    _validDate(row['date'], 'transaction date');
+    if (row['accountId'] == null) {
+      throw ArgumentError('Transaction needs an account.');
+    }
+    _validateAccountReference(row, currentAccounts);
+    if (row['description'] is! String ||
+        (row['description'] as String).trim().isEmpty) {
+      throw ArgumentError('Transaction needs a description.');
+    }
+    final amount = row['amount'];
+    if (amount is! num ||
+        !amount.isFinite ||
+        amount == 0 ||
+        row['signUncertain'] == true) {
+      throw ArgumentError('Invalid transaction amount or direction.');
+    }
+    _finiteFields(row, ['amountIls', 'rate']);
+    if (row['rate'] is num && (row['rate'] as num) <= 0) {
+      throw ArgumentError('Invalid exchange rate.');
+    }
+    final currency = normalizeCurrency('${row['currency'] ?? 'ILS'}');
+    if (currency == null || row['currencyInvalid'] == true) {
+      throw ArgumentError('Invalid transaction currency.');
+    }
+    row['currency'] = currency;
+    bool changed(String key) => old == null || row[key] != old[key];
+    final kind = row['kind'];
+    if (changed('kind') &&
+        kind != null &&
+        !['transaction', 'card_summary', 'bank_payment'].contains(kind)) {
+      throw ArgumentError('Invalid transaction kind.');
+    }
+    final status = row['status'];
+    if (changed('status') &&
+        status != null &&
+        !['actual', 'planned', 'predicted'].contains(status)) {
+      throw ArgumentError('Invalid transaction status.');
+    }
+    for (final key in ['pending', 'repeatMonthly']) {
+      if (changed(key) && row[key] != null && row[key] is! bool) {
+        throw ArgumentError('Invalid transaction flag.');
+      }
+    }
+    if ((changed('pending') || changed('status')) &&
+        row['pending'] == true &&
+        status != 'planned') {
+      throw ArgumentError('Pending transactions must be planned.');
+    }
+    if (changed('cardProvider') ||
+        changed('cardSuffix') ||
+        changed('accountId')) {
+      final provider = '${row['cardProvider'] ?? ''}'.trim();
+      final suffix = '${row['cardSuffix'] ?? ''}'.trim();
+      if (provider.isNotEmpty || suffix.isNotEmpty) {
+        final account = currentAccounts
+            .where((a) => a['id'] == row['accountId'])
+            .firstOrNull;
+        if (account?['type'] != 'card' ||
+            provider.isEmpty ||
+            !RegExp(r'^\d{4}$').hasMatch(suffix)) {
+          throw ArgumentError('Invalid card identity.');
+        }
+      }
+    }
+    if (changed('rateDate') &&
+        row['rateDate'] != null &&
+        '${row['rateDate']}'.isNotEmpty) {
+      _validDate(row['rateDate'], 'rate date');
+    }
+    if (changed('rateSource') &&
+        row['rateSource'] != null &&
+        '${row['rateSource']}'.isNotEmpty &&
+        ![
+          'statement',
+          'manual',
+          'bankOfIsrael',
+          'native',
+        ].contains(row['rateSource'])) {
+      throw ArgumentError('Invalid rate source.');
+    }
+    return row;
+  }
+
+  Future<void> putBalanceSnapshot(Map<String, dynamic> input) async {
+    _assertEditable();
+    final row = _validatedSnapshot(input, accounts);
+    _data['balanceSnapshots'] =
+        balanceSnapshots.where((old) => old['id'] != row['id']).toList()
+          ..add(row);
+    await _save();
+  }
+
+  Future<void> deleteBalanceSnapshot(String id) async {
+    _assertEditable();
+    _data['balanceSnapshots'] = balanceSnapshots
+        .where((row) => row['id'] != id)
+        .toList();
+    await _save();
+  }
+
+  Future<void> putDebt(Map<String, dynamic> input) async {
+    _assertEditable();
+    final row = _validatedDebt(input, accounts);
+    _data['debts'] = debts.where((old) => old['id'] != row['id']).toList()
+      ..add(row);
+    await _save();
+  }
+
+  Future<void> deleteDebt(String id) async {
+    _assertEditable();
+    _data['debts'] = debts.where((row) => row['id'] != id).toList();
+    await _save();
+  }
+
+  /// Register the exact exported baseline, never trusting IDs or values from a
+  /// workbook during a later reimport. Generation binds it to this vault session.
+  Future<void> saveWorkbookExportManifest(
+    String id, {
+    required int expectedGeneration,
+    required List<Map<String, dynamic>> entries,
+    required List<Map<String, dynamic>> snapshots,
+    required List<Map<String, dynamic>> debts,
+  }) async {
+    _assertEditable();
+    if (expectedGeneration != _generation) {
+      throw StateError('The diary changed while the workbook was being saved.');
+    }
+    if (id.trim().isEmpty ||
+        workbookExports.any((record) => record['id'] == id)) {
+      throw ArgumentError('Invalid or duplicate workbook export ID.');
+    }
+    for (final records in [entries, snapshots, debts]) {
+      final ids = <String>{};
+      for (final row in records) {
+        if (!ids.add(_recordId(row))) {
+          throw ArgumentError('Duplicate exported record ID.');
+        }
+      }
+    }
+    final result = workbookExports;
+    result.add(
+      _deepCopy({
+        'id': id,
+        'createdAt': _clock().toIso8601String(),
+        'entries': entries,
+        'snapshots': snapshots,
+        'debts': debts,
+      }),
+    );
+    _data['workbookExports'] = result;
+    await _save();
+  }
+
+  /// Apply a reviewed workbook import or reimport in one encrypted save.
+  /// Without a trusted export ID this operation only adds new records.
+  /// Updates and explicit deletions must be scoped to IDs in that manifest.
+  Future<void> applyWorkbookReview({
+    required Map<String, dynamic> expectedSnapshot,
+    String? exportId,
+    List<Map<String, dynamic>> newAccounts = const [],
+    List<Map<String, dynamic>> entries = const [],
+    List<Map<String, dynamic>> snapshots = const [],
+    List<Map<String, dynamic>> debts = const [],
+    Set<String> deleteEntryIds = const {},
+    Set<String> deleteSnapshotIds = const {},
+    Set<String> deleteDebtIds = const {},
+  }) async {
+    _assertEditable();
+    if (jsonEncode(workbookReviewSnapshot()) != jsonEncode(expectedSnapshot)) {
+      throw StateError('The diary changed since workbook review.');
+    }
+    final trusted = exportId == null
+        ? null
+        : workbookExports.where((row) => row['id'] == exportId).firstOrNull;
+    if (exportId != null && trusted == null) {
+      throw StateError('Unknown workbook export.');
+    }
+    final nextAccounts = accounts;
+    final accountIds = nextAccounts.map((a) => '${a['id']}').toSet();
+    for (final input in newAccounts) {
+      final account = _deepCopy(input);
+      final id = _recordId(account);
+      if (!accountIds.add(id) ||
+          !['bank', 'card', 'cash'].contains(account['type']) ||
+          account['name'] is! String ||
+          (account['name'] as String).trim().isEmpty) {
+        throw ArgumentError('Invalid workbook account.');
+      }
+      _finiteFields(account, ['balance']);
+      nextAccounts.add(account);
+    }
+    final currentEntries = this.entries;
+    final currentSnapshots = balanceSnapshots;
+    final currentDebts = this.debts;
+
+    Set<String> baselineIds(String key) {
+      if (trusted == null) return <String>{};
+      final records = trusted[key];
+      if (records is! List) {
+        throw StateError('Invalid workbook export manifest.');
+      }
+      return records.map((raw) {
+        if (raw is! Map) throw StateError('Invalid workbook export manifest.');
+        return _recordId(Map<String, dynamic>.from(raw));
+      }).toSet();
+    }
+
+    void validateScope(
+      List<Map<String, dynamic>> incoming,
+      List<Map<String, dynamic>> current,
+      Set<String> deletions,
+      String manifestKey,
+    ) {
+      final incomingIds = <String>{};
+      final currentIds = current.map(_recordId).toSet();
+      final allowed = baselineIds(manifestKey);
+      for (final row in incoming) {
+        final id = _recordId(row);
+        if (!incomingIds.add(id) || deletions.contains(id)) {
+          throw ArgumentError('Repeated or conflicting workbook record ID.');
+        }
+        if (currentIds.contains(id) && !allowed.contains(id)) {
+          throw StateError('Workbook cannot update an unexported record.');
+        }
+        if (!currentIds.contains(id) && allowed.contains(id)) {
+          throw StateError('An exported record was deleted since review.');
+        }
+      }
+      if (deletions.any(
+        (id) => !allowed.contains(id) || !currentIds.contains(id),
+      )) {
+        throw StateError(
+          'Workbook cannot delete an unexported or missing record.',
+        );
+      }
+    }
+
+    validateScope(entries, currentEntries, deleteEntryIds, 'entries');
+    validateScope(snapshots, currentSnapshots, deleteSnapshotIds, 'snapshots');
+    validateScope(debts, currentDebts, deleteDebtIds, 'debts');
+
+    final existingById = {
+      for (final row in currentEntries) '${row['id']}': row,
+    };
+    final preparedEntries = <Map<String, dynamic>>[];
+    for (final input in entries) {
+      final old = existingById['${input['id']}'];
+      final merged = old == null
+          ? {...input, 'linkedIds': <String>[]}
+          : {...old, ...input};
+      if (old != null) {
+        // Links and generated-occurrence provenance are owned by the diary,
+        // not by untrusted spreadsheet cells.
+        for (final field in [
+          'linkedIds',
+          'recurringSourceId',
+          'recurringOffset',
+          'recurringScheduleDate',
+          'recurringOverridden',
+        ]) {
+          if (old.containsKey(field)) {
+            merged[field] = old[field];
+          } else {
+            merged.remove(field);
+          }
+        }
+        final sourceChanged =
+            merged['amount'] != old['amount'] ||
+            DateTime.tryParse('${merged['date']}')
+                    ?.toIso8601String()
+                    .substring(0, 10) !=
+                DateTime.tryParse('${old['date']}')
+                    ?.toIso8601String()
+                    .substring(0, 10) ||
+            normalizeCurrency('${merged['currency'] ?? 'ILS'}') !=
+                normalizeCurrency('${old['currency'] ?? 'ILS'}');
+        if (sourceChanged) {
+          final currency = normalizeCurrency('${merged['currency'] ?? 'ILS'}');
+          if (currency == 'ILS') {
+            merged['amountIls'] = merged['amount'];
+          } else if (!input.containsKey('amountIls') ||
+              input['amountIls'] == old['amountIls']) {
+            merged.remove('amountIls');
+          }
+        }
+        final conversionChanged = merged['amountIls'] != old['amountIls'];
+        if (sourceChanged || conversionChanged) {
+          for (final key in ['rate', 'rateDate', 'rateSource']) {
+            if (normalizeCurrency('${merged['currency'] ?? 'ILS'}') == 'ILS' ||
+                !input.containsKey(key) ||
+                input[key] == old[key]) {
+              merged.remove(key);
+            }
+          }
+        }
+        if (old['recurringSourceId'] != null) {
+          merged['recurringOverridden'] = true;
+        }
+      }
+      preparedEntries.add(
+        _validatedWorkbookEntry(merged, nextAccounts, old: old),
+      );
+    }
+    final preparedSnapshots = snapshots
+        .map((row) => _validatedSnapshot(row, nextAccounts))
+        .toList();
+    final preparedDebts = debts
+        .map((row) => _validatedDebt(row, nextAccounts))
+        .toList();
+
+    _data['accounts'] = nextAccounts;
+    if (deleteEntryIds.isNotEmpty) _removeEntries(deleteEntryIds);
+    final resultingEntries = this.entries;
+    final edited = <String>{};
+    for (final row in preparedEntries) {
+      final old = resultingEntries
+          .where((entry) => entry['id'] == row['id'])
+          .firstOrNull;
+      if (old != null) {
+        // Deletions above may have removed a link from this row.
+        row['linkedIds'] = old['linkedIds'] ?? <String>[];
+        edited.add('${row['id']}');
+      }
+      resultingEntries.removeWhere((entry) => entry['id'] == row['id']);
+      resultingEntries.add(row);
+    }
+    _data['entries'] = resultingEntries;
+    if (edited.isNotEmpty) _markImportedEdited(edited);
+    final resultingSnapshots = currentSnapshots
+        .where((row) => !deleteSnapshotIds.contains('${row['id']}'))
+        .toList();
+    for (final row in preparedSnapshots) {
+      resultingSnapshots.removeWhere((old) => old['id'] == row['id']);
+      resultingSnapshots.add(row);
+    }
+    _data['balanceSnapshots'] = resultingSnapshots;
+    final resultingDebts = currentDebts
+        .where((row) => !deleteDebtIds.contains('${row['id']}'))
+        .toList();
+    for (final row in preparedDebts) {
+      resultingDebts.removeWhere((old) => old['id'] == row['id']);
+      resultingDebts.add(row);
+    }
+    _data['debts'] = resultingDebts;
+    _extendRecurring();
+    await _save();
   }
 
   Future<void> setLanguage(String language) async {
@@ -725,7 +1247,22 @@ class DiaryController extends ChangeNotifier {
           .toList();
     }
     _data['entries'] = list;
+    final account = accounts.where((a) => a['id'] == id).firstOrNull;
     _data['accounts'] = accounts..removeWhere((a) => a['id'] == id);
+    // Keep financial snapshots and debts if their optional account is removed.
+    // Detach the reference so those records remain editable and retain a label.
+    final keptSnapshots = balanceSnapshots;
+    final keptDebts = debts;
+    for (final row in [...keptSnapshots, ...keptDebts]) {
+      if (row['accountId'] == id) {
+        row.remove('accountId');
+        if (account?['name'] != null) {
+          row['formerAccountName'] = account!['name'];
+        }
+      }
+    }
+    _data['balanceSnapshots'] = keptSnapshots;
+    _data['debts'] = keptDebts;
     _data['cardMappings'] = cardMappings
       ..removeWhere((mapping) => mapping['accountId'] == id);
     _extendRecurring();
