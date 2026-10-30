@@ -112,14 +112,22 @@ Excel _decode(Uint8List bytes) {
 bool isDiaryExportWorkbook(Uint8List bytes) {
   final names = _decode(bytes).tables.keys.toSet();
   if (names.contains('_locale') || names.any(_sheets.contains)) return true;
-  // Localized labels such as "Debts" can also occur in unrelated workbooks.
-  // Multiple localized data tabs still identify a damaged app export even if
-  // both reserved metadata tabs were removed.
+  // Metadata-free reference workbooks may contain localized tabs with the same
+  // ordinary names as diary sheets. Their numbered months select reference
+  // import, which only offers reviewed additions and cannot infer deletions.
+  if (names.any((name) {
+    final month = int.tryParse(name);
+    return month != null && month >= 1 && month <= 12;
+  })) {
+    return false;
+  }
+  // Without metadata or numbered months, the complete set of localized data
+  // sheets still identifies a damaged export for strict validation.
   return ['he', 'ru'].any((language) {
-    final matched = _sheets
+    final required = _sheets
         .where((name) => name != '_manifest')
-        .where((name) => names.contains(workbookSheetName(language, name)));
-    return matched.length >= 2;
+        .map((name) => workbookSheetName(language, name));
+    return required.every(names.contains);
   });
 }
 
@@ -282,6 +290,9 @@ bool _same(Object? a, Object? b) =>
 
 bool _sameField(String field, Object? a, Object? b) {
   if ((a == null || a == '') && (b == null || b == '')) return true;
+  // The exporter supplies ILS for legacy transactions with no currency.
+  // Keep this directional: clearing a previously stored currency is an edit.
+  if (field == 'currency' && (a == null || a == '') && b == 'ILS') return true;
   if ({
     'date',
     'dueDate',
