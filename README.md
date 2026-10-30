@@ -1,28 +1,20 @@
 # Financial Diary
 
-A local-first Flutter financial diary for Android and Windows. Create separate bank and credit-card accounts, import statements for review, track income and expenses, and explore estimated cash flow. The interface supports English, Hebrew and Russian.
+A local-first Flutter financial diary for Windows. Create separate bank and credit-card accounts, import statements for review, track income and expenses, and explore estimated cash flow. The interface supports English, Hebrew and Russian.
 
 ## Build and run
 
-Install Flutter and the Android SDK or Windows desktop toolchain, then run:
+Install Flutter and the Windows desktop toolchain, then run:
 
 ```sh
 flutter pub get
 flutter test
 flutter run -d windows
-flutter run -d <android-device-id>
 ```
 
-Use `flutter build windows --release` for a Windows application folder. Keep the executable, OCR engine, libraries and assets together. An Android release build requires an existing release keystore and a local `android/key.properties` file:
+Use `flutter build windows --release` for a standalone Windows application folder. Keep the executable, OCR engine, libraries and assets together.
 
-```properties
-storeFile=path/to/release-keystore.jks
-storePassword=your-store-password
-keyAlias=your-key-alias
-keyPassword=your-key-password
-```
-
-The keystore path is relative to the `android` directory unless absolute. Never commit credentials or keystores. `flutter build apk --release` fails without valid signing configuration; debug builds continue to use the debug key. The current `com.example.finance_diary` package ID is retained to preserve existing debug installations. Before distributing, choose a permanent package ID and export an encrypted backup; a different package ID or signing key requires a separate installation and backup restore, not an in-place upgrade.
+For VS Code, open `.vscode/finance-diary.code-workspace` to use the project's lightweight Java settings and disable automatic Gradle discovery. This does not change Java or Gradle settings for other projects.
 
 ## Using the diary
 
@@ -38,7 +30,7 @@ Yahav temporary entries are imported as pending planned transactions. Their orig
 
 Map debit and credit to their own columns when available. For unsigned bank amounts, choose income or expense during review; the app will not save unclassified rows. For card charges, unsigned amounts default to expenses and can be corrected individually. To fix an earlier import, open an entry in the Diary and choose its income/expense direction, or filter the Diary and use **Mark shown as expenses** or **Mark shown as income** after confirmation. You can also delete individual entries, or use **Delete transactions** to remove the shown entries after confirmation. Deleting an account also removes its transactions after confirmation.
 
-PDF extraction and OCR can miss or misread transactions, amounts or signs. Always compare the review screen with all pages of the original statement. Scanned pages use position-aware OCR, and their proposed income or expense directions require confirmation. A page containing both selectable transactions and image-only rows may still need manual entries; the app warns when it cannot rule this out. Android and Windows include offline OCR for Hebrew, English and Russian. Windows verifies and locks the bundled OCR engine and language models before use; missing or altered components are reported instead of running an unverified program. OCR uses temporary app-cache images that are removed after use; an interrupted process may leave temporary files until the next cleanup. The file picker may also create temporary copies.
+PDF extraction and OCR can miss or misread transactions, amounts or signs. Always compare the review screen with all pages of the original statement. Scanned pages use position-aware OCR, and their proposed income or expense directions require confirmation. A page containing both selectable transactions and image-only rows may still need manual entries; the app warns when it cannot rule this out. Windows includes offline OCR for Hebrew, English and Russian and verifies and locks the bundled OCR engine and language models before use; missing or altered components are reported instead of running an unverified program. OCR uses temporary app-cache images that are removed after use; an interrupted process may leave temporary files until the next cleanup. The file picker may also create temporary copies.
 
 New imports automatically skip exact matches with existing transactions in the same account when card identities agree. Matches involving unidentified cards require review and default to keeping both. Review skipped rows before saving: identical legitimate transactions are possible, so you can keep both or choose the imported row instead. Review possible duplicates already in the diary and suggested card-payment links in the reconciliation queue. Linked card summaries and bank payments are excluded from combined spending only when their linked amounts reconcile; partial matches remain included and should be reviewed to avoid double counting.
 
@@ -50,7 +42,7 @@ The diary can filter entries by account, card, category and an inclusive custom 
 
 **Import workbook** reviews the supported 12-month workbook layout. Transactions, balances and debts can be reviewed separately; uncertain rows start unselected, and undated records require a date or an explicit skip. Import never runs workbook macros. Check the original workbook and the proposed records before saving; unfamiliar layouts and ambiguous values may need manual correction.
 
-**Export to Excel (unencrypted)** saves the currently shown transactions and matching dated balances and debts in a macro-enabled XLSM file. This file is unencrypted and does not replace an encrypted backup. It contains data sheets and 12 monthly sheets for each represented year. Monthly details and summaries show the export-time values immediately. Summaries separate actual, planned and pending entries, identify missing ILS conversions, and use the full diary's confirmed links to avoid counting reconciled payments twice. After editing workbook data, use **Refresh summaries** to update the monthly views. For changes to linked transactions, reimport and reconcile in the app, then export again, because the spending exclusions are based on the diary at export time. Refresh and month-navigation buttons require desktop Excel and macros permitted by its security settings. The app can create the file on Android or Windows, but Android Excel cannot run these desktop macros.
+**Export to Excel (unencrypted)** saves the currently shown transactions and matching dated balances and debts in a macro-enabled XLSM file. This file is unencrypted and does not replace an encrypted backup. It contains data sheets and 12 monthly sheets for each represented year. Monthly details and summaries show the export-time values immediately. Summaries separate actual, planned and pending entries, identify missing ILS conversions, and use the full diary's confirmed links to avoid counting reconciled payments twice. After editing workbook data, use **Refresh summaries** to update the monthly views. For changes to linked transactions, reimport and reconcile in the app, then export again, because the spending exclusions are based on the diary at export time. Refresh and month-navigation buttons require desktop Excel and macros permitted by its security settings.
 
 Exports follow the app language: Hebrew and Russian workbooks have translated tabs, headings and supported record values, with right-to-left layout for Hebrew. Names, descriptions and categories stay as entered. Each monthly transaction list ends with actual income, actual spending and the number of missing ILS conversions; planned and pending amounts remain in the separate status summaries. Previously exported workbooks can still be reimported.
 
@@ -60,4 +52,4 @@ Forecasts are estimates derived from historical records and planned entries. Sup
 
 ## Privacy and project status
 
-Do not commit real statements, backups, or financial data. Tests use synthetic examples. Statement import requires careful review, and support for unseen layouts is not guaranteed. The bundled Android OCR engine's complete third-party notices and binary provenance should be verified before distributing a release; Windows OCR provenance and notices are in `windows/ocr`.
+Do not commit real statements, backups, or financial data. Tests use synthetic examples. Statement import requires careful review, and support for unseen layouts is not guaranteed. Windows OCR provenance and notices are in `windows/ocr`.

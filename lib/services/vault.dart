@@ -8,7 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path_provider_windows/path_provider_windows.dart';
 
 /// A self-contained encrypted diary. Backup files have exactly the same format
-/// and can therefore be moved between desktop and mobile without a server.
+/// and can therefore be moved between devices without a server. Existing
+/// backups from other supported versions remain readable.
 ///
 /// The passphrase is never persisted. Call [lock] when the diary should no
 /// longer be accessible. The caller must await each operation before starting
@@ -122,7 +123,7 @@ class Vault {
 
   /// Copies the encrypted vault; this never writes plaintext to the backup.
   /// Use this for platform document pickers that accept bytes rather than a
-  /// filesystem path (notably Android's Storage Access Framework).
+  /// filesystem path when a platform picker supplies bytes instead.
   Future<List<int>> exportBytes() async {
     if (!isUnlocked) throw StateError('The diary is locked.');
     return file.readAsBytes();

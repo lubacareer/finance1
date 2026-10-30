@@ -473,7 +473,7 @@ class _ImportScreenState extends State<ImportScreen> {
         refreshMatches();
       });
       final bytes = await file.readAsBytes().whenComplete(() async {
-        // Android may have copied the selected document to the picker's own
+        // The picker may have copied the selected document to its own
         // private cache. Never delete the source document itself.
         try {
           await FilePicker.clearTemporaryFiles();

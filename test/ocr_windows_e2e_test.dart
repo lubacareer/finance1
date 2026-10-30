@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
 
-import '../tool/ocr_android_smoke.dart' show scannedPdf;
+import 'support/scanned_pdf.dart' show scannedPdf;
 
 void main() {
   testWidgets(
