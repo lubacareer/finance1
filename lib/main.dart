@@ -26,6 +26,7 @@ import 'services/insights.dart';
 import 'services/manual_numbers.dart';
 import 'services/ocr_service.dart';
 import 'services/vault.dart';
+import 'services/vba_integrity.dart';
 import 'translations.dart';
 
 Future<void> main() async {
@@ -462,6 +463,8 @@ class _HomeState extends State<Home> {
           );
         }
       }
+    } on VbaIntegrityException {
+      message(t('Workbook macro integrity check failed; export unavailable.'));
     } catch (_) {
       message(t('Could not save the Excel file.'));
     } finally {

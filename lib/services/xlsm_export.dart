@@ -5,7 +5,9 @@ import 'package:excel_plus/excel_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:xml/xml.dart';
 
+import 'diary_controller.dart';
 import 'insights.dart';
+import 'vba_integrity.dart';
 
 /// The first row in each data sheet is a stable machine-readable schema.
 const transactionWorkbookColumns = <String>[
@@ -80,12 +82,18 @@ Future<Uint8List> buildDiaryXlsm({
   Uint8List? macroProject,
 }) async {
   if (exportId.trim().isEmpty) throw ArgumentError('Missing export ID');
-  final macro =
-      macroProject ??
-      (await rootBundle.load('assets/vba/vbaProject.bin')).buffer.asUint8List();
-  if (macro.length < 512 || macro[0] != 0xd0 || macro[1] != 0xcf) {
-    throw StateError('The trusted VBA project is unavailable.');
+  final Uint8List macro;
+  try {
+    if (macroProject != null) {
+      macro = macroProject;
+    } else {
+      final data = await rootBundle.load('assets/vba/vbaProject.bin');
+      macro = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    }
+  } catch (_) {
+    throw const VbaIntegrityException();
   }
+  verifyVbaProject(macro);
   final excel = Excel.createExcel();
   final transactions = excel['_transactions'];
   final balanceSheet = excel['_snapshots'];
@@ -224,7 +232,7 @@ Future<Uint8List> buildDiaryXlsm({
   instructions.appendRow([
     text(
       tr(
-        'Edit the data sheets, then refresh summaries. Monthly views may be stale after edits.',
+        'After editing, refresh. For changes to linked transactions, reimport and reconcile in the app, then export again.',
       ),
     ),
   ]);
@@ -263,6 +271,9 @@ Future<Uint8List> buildDiaryXlsm({
       ),
     ),
   ]);
+  for (final label in ['No transactions', 'No balance snapshots', 'No debts']) {
+    instructions.appendRow([text(tr(label))]);
+  }
   manifest.appendRow([
     const IntCellValue(1),
     text(exportId),
@@ -272,10 +283,33 @@ Future<Uint8List> buildDiaryXlsm({
   final accountNames = {
     for (final a in accounts) '${a['id']}': '${a['name'] ?? ''}',
   };
+  // Formula caches let viewers display correct values before recalculation.
+  final formulaValues = <String, Map<String, Object>>{};
+  void cache(String sheet, String cell, Object value) =>
+      (formulaValues[sheet] ??= {})[cell] = value;
+  String summaryStatus(Map<String, dynamic> row) =>
+      row['status'] == 'planned' && row['pending'] == true
+      ? 'pending'
+      : row['status'] == null || row['status'] == ''
+      ? 'actual'
+      : '${row['status']}';
+  num? effectiveIls(Map<String, dynamic> row) {
+    final amount = row['amount'];
+    if ('${row['currency'] ?? 'ILS'}'.toUpperCase() == 'ILS') {
+      return amount is num && amount.isFinite ? amount : null;
+    }
+    final converted = row['amountIls'];
+    return converted is num && converted.isFinite ? converted : null;
+  }
+
   final years = <int>{};
+  final representedMonths = <String>{};
   void yearFrom(Object? value) {
     final d = DateTime.tryParse('${value ?? ''}');
-    if (d != null && d.year >= 1900 && d.year <= 9999) years.add(d.year);
+    if (d != null && d.year >= 1900 && d.year <= 9999) {
+      years.add(d.year);
+      representedMonths.add('${d.year}-${d.month.toString().padLeft(2, '0')}');
+    }
   }
 
   for (final row in filteredRows) {
@@ -284,6 +318,9 @@ Future<Uint8List> buildDiaryXlsm({
     final rowNumber = transactions.maxRows + 1;
     copy['countsTowardSpending'] = Insights.countsAsSpending(row, allRows);
     copy['accountName'] = accountNames['${row['accountId']}'] ?? '';
+    copy['currency'] ??= 'ILS';
+    cache('_transactions', 'Y$rowNumber', effectiveIls(copy) ?? '');
+    cache('_transactions', 'Z$rowNumber', summaryStatus(copy));
     final cells = values(copy, transactionWorkbookColumns, {
       'date',
       'rateDate',
@@ -348,13 +385,15 @@ Future<Uint8List> buildDiaryXlsm({
         text('${tr('Monthly summary')} $name'),
         IntCellValue(filteredRows.length + 2),
       ]);
-      sheet.appendRow([text(tr('Macro refresh state')), const IntCellValue(0)]);
+      sheet.appendRow([text(tr('Macro refresh state')), const IntCellValue(1)]);
       sheet.appendRow([
-        text(tr('Awaiting refresh; enable macros and use Refresh summaries.')),
+        text(tr('Values at export; refresh after editing data.')),
       ]);
       sheet.appendRow([
         text(
-          tr('Edit data sheets, then refresh; displayed values may be stale.'),
+          tr(
+            'After editing, refresh. For changes to linked transactions, reimport and reconcile in the app, then export again.',
+          ),
         ),
       ]);
       sheet.appendRow([text(' ')]);
@@ -399,27 +438,30 @@ Future<Uint8List> buildDiaryXlsm({
           ),
           FormulaCellValue('IF(\$B\$2=1,B$r-C$r,"")'),
           FormulaCellValue(
-            'IF(\$B\$2=1,COUNTIFS($criteria,$ils,"",$signed,"<>0"),"")',
+            'IF(\$B\$2=1,COUNTIFS($criteria,$ils,"",$signed,">0")+COUNTIFS($criteria,$ils,"",$signed,"<0",$count,TRUE),"")',
           ),
         ]);
       }
+      // Column order mirrors the refresh macro: transactions are visible first.
       sheet.appendRow([
-        text(tr('Account and cash balances')),
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        text(tr('Debts')),
-        ...List.filled(9, null),
         text(tr('Transactions')),
+        ...List.filled(9, null),
+        text(tr('Account and cash balances')),
+        ...List.filled(9, null),
+        text(tr('Debts')),
       ]);
       sheet.appendRow([
         for (final x in [
+          'Date',
+          'Account',
+          'Description',
+          'Category',
+          'Status',
+          'Amount',
+          'Currency',
+          'ILS amount',
+          'Counts toward spending',
+          'Entry type',
           'Date',
           'Type',
           'Account',
@@ -439,23 +481,131 @@ Future<Uint8List> buildDiaryXlsm({
           'Due date',
           'Status',
           'Currency',
-          '',
-          'Date',
-          'Account',
-          'Description',
-          'Category',
-          'Status',
-          'Amount',
-          'Currency',
-          'ILS amount',
-          'Counts toward spending',
-          'Entry type',
         ])
           text(tr(x)),
       ]);
+      bool inMonth(Map<String, dynamic> row) {
+        final d = DateTime.tryParse('${row['date'] ?? ''}');
+        return d != null && d.year == year && d.month == month;
+      }
+
+      final monthRows = filteredRows.where(inMonth).toList();
+      final monthSnapshots = snapshots.where(inMonth).toList();
+      final monthDebts = debts.where(inMonth).toList();
+      void put(int col, int row, CellValue? value) {
+        if (value != null) {
+          sheet
+                  .cell(
+                    CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row),
+                  )
+                  .value =
+              value;
+        }
+      }
+
+      void putRow(int col, int index, List<CellValue?> cells) {
+        for (var i = 0; i < cells.length; i++) {
+          put(col + i, 14 + index, cells[i]);
+        }
+      }
+
+      if (monthRows.isEmpty) put(0, 14, text(tr('No transactions')));
+      if (monthSnapshots.isEmpty) put(10, 14, text(tr('No balance snapshots')));
+      if (monthDebts.isEmpty) put(20, 14, text(tr('No debts')));
+      for (var i = 0; i < monthRows.length; i++) {
+        final row = monthRows[i];
+        putRow(0, i, [
+          date(row['date']),
+          text(accountNames['${row['accountId']}'] ?? ''),
+          text(row['description']),
+          text(row['category']),
+          text(summaryStatus(row)),
+          scalar(row['amount']),
+          text(row['currency'] ?? 'ILS'),
+          scalar(effectiveIls(row)),
+          scalar(Insights.countsAsSpending(row, allRows)),
+          text(row['kind']),
+        ]);
+      }
+      for (var i = 0; i < monthSnapshots.length; i++) {
+        final row = monthSnapshots[i];
+        putRow(10, i, [
+          date(row['date']),
+          text(row['kind']),
+          text(accountNames['${row['accountId']}'] ?? ''),
+          text(row['name']),
+          scalar(row['remainingBalance']),
+          scalar(row['fromBank']),
+          scalar(row['payments']),
+          scalar(row['otherBalance']),
+          scalar(DiaryController.snapshotDebt(row)),
+          text(row['currency']),
+        ]);
+      }
+      for (var i = 0; i < monthDebts.length; i++) {
+        final row = monthDebts[i];
+        final payments = (row['payments'] as List? ?? const []);
+        num total = 0;
+        for (final item in payments) {
+          if (item is Map && item['amount'] is num) {
+            total += item['amount'] as num;
+          }
+        }
+        putRow(20, i, [
+          text(row['person']),
+          text(row['direction']),
+          scalar(row['originalAmount']),
+          scalar(total),
+          scalar(DiaryController.debtRemaining(row)),
+          date(row['date']),
+          date(row['dueDate']),
+          text(row['status']),
+          text(row['currency']),
+        ]);
+      }
+      const statuses = ['actual', 'planned', 'pending', 'predicted'];
+      for (var i = 0; i < statuses.length; i++) {
+        num income = 0, expense = 0;
+        var missing = 0;
+        for (final row in monthRows.where(
+          (r) => summaryStatus(r) == statuses[i],
+        )) {
+          final amount = row['amount'];
+          final counted = Insights.countsAsSpending(row, allRows);
+          final converted = effectiveIls(row);
+          if (converted != null) {
+            if (converted > 0) {
+              income += converted;
+            } else if (converted < 0 && counted) {
+              expense -= converted;
+            }
+          } else if (amount is num &&
+              amount.isFinite &&
+              (amount > 0 || (amount < 0 && counted))) {
+            missing++;
+          }
+        }
+        if (!income.isFinite ||
+            !expense.isFinite ||
+            !(income - expense).isFinite) {
+          throw StateError(
+            'Monthly totals exceed the supported numeric range.',
+          );
+        }
+        final r = i + 9;
+        cache(name, 'B$r', income);
+        cache(name, 'C$r', expense);
+        cache(name, 'D$r', income - expense);
+        cache(name, 'E$r', missing);
+      }
     }
   }
-  excel.setDefaultSheet(monthNames.first);
+  final firstRepresentedMonth = representedMonths.toList()..sort();
+  excel.setDefaultSheet(
+    firstRepresentedMonth.isEmpty
+        ? monthNames.first
+        : firstRepresentedMonth.first,
+  );
   final encoded = excel.save();
   if (encoded == null) throw StateError('Could not encode workbook.');
   return _addMacroAndControls(
@@ -463,6 +613,7 @@ Future<Uint8List> buildDiaryXlsm({
     macro,
     monthNames,
     tr,
+    formulaValues,
   );
 }
 
@@ -471,6 +622,7 @@ Uint8List _addMacroAndControls(
   Uint8List macro,
   List<String> monthNames,
   String Function(String) tr,
+  Map<String, Map<String, Object>> formulaValues,
 ) {
   final source = ZipDecoder().decodeBytes(xlsx, verify: true);
   final parts = <String, List<int>>{
@@ -522,7 +674,7 @@ Uint8List _addMacroAndControls(
   }
   var n = 0;
   for (final sheet in doc.findAllElements('sheet')) {
-    if (!monthNames.contains(sheet.getAttribute('name'))) continue;
+    final sheetName = sheet.getAttribute('name');
     final id =
         sheet.getAttribute(
           'id',
@@ -536,6 +688,23 @@ Uint8List _addMacroAndControls(
         : target.startsWith('xl/')
         ? target
         : 'xl/$target';
+    final cached = formulaValues[sheetName];
+    if (cached != null) {
+      final sheetDoc = XmlDocument.parse(read(sheetPath));
+      for (final cell in sheetDoc.findAllElements('c')) {
+        final value = cached[cell.getAttribute('r')];
+        if (value == null) continue;
+        for (final existing in cell.findElements('v').toList()) {
+          existing.remove();
+        }
+        cell.setAttribute('t', value is String ? 'str' : null);
+        cell.children.add(
+          XmlElement(XmlName.parts('v'), [], [XmlText('$value')]),
+        );
+      }
+      write(sheetPath, sheetDoc.toXmlString());
+    }
+    if (!monthNames.contains(sheetName)) continue;
     final baseName = sheetPath.split('/').last;
     final relationPath = 'xl/worksheets/_rels/$baseName.rels';
     n++;

@@ -4,11 +4,13 @@
 exported workbooks. `vbaProject.bin` was compiled in desktop Excel from that
 source in a new, disposable blank workbook. Its SHA-256 is:
 
-`0833b8825cce6ce249253816b56e7a348315d3e9f0b2b2e7f1fafd498e185aaa`
+`2b888864730b6f116c1c79c1feb1068725dbc77f2030f8d5b8a022215ab29bf3`
 
-The same checksum is recorded beside the asset in `pubspec.yaml`. Never use a
-personal workbook or statement to rebuild or test this project, and do not add
-temporary workbooks or personal metadata to the repository.
+The canonical checksum is in `lib/services/vba_integrity.dart`, and is also
+recorded beside the asset in `pubspec.yaml`. The app checks the complete binary
+against the pin before exporting. Never use a personal workbook or statement to
+rebuild or test this project, and do not add temporary workbooks or personal
+metadata to the repository.
 
 ## Release checklist
 
@@ -16,16 +18,18 @@ temporary workbooks or personal metadata to the repository.
    identifying document properties, import `FinancialDiary.bas` as its only
    standard module in the Visual Basic editor, choose **Debug > Compile
    VBAProject**, and save the disposable workbook. Extract
-   `xl/vbaProject.bin` from the workbook ZIP and replace the asset. Review the
-   generated binary for personal metadata and unexpected code. Update the two
-   checksum references when replacing it.
+   `xl/vbaProject.bin` from the workbook ZIP. Inspect the candidate with
+   `olevba` and review the source and binary for personal metadata and
+   unexpected code. Run `Get-FileHash` on the candidate and update the canonical
+   pin and the checksum references here and in `pubspec.yaml` after review. Then
+   replace the asset with the reviewed candidate.
 2. Run `Get-FileHash assets/vba/vbaProject.bin -Algorithm SHA256` in PowerShell
-   and compare it with the recorded checksum.
+   and compare it with the canonical pin and both recorded references.
 3. Install `oletools==0.60.2` in a development Python environment and run
    `python tool/verify_vba_source.py`. This uses `olevba` to extract and compare
-   the embedded VBA text with the reviewed source, and rejects extra code in
-   the workbook and sheet modules. A candidate binary can be supplied as the
-   script's argument before replacing the asset.
+   the embedded VBA text with the reviewed source, verifies the canonical pin,
+   and rejects extra code in the workbook and sheet modules. The script accepts
+   one candidate path, but it must match the current reviewed pin.
 4. On Windows with desktop Excel and `pywin32`, generate a synthetic fixture by
    setting `FINANCE_TEST_XLSM_PATH` to a disposable path and running
    `flutter test --no-pub test/xlsm_export_test.dart`. Then run

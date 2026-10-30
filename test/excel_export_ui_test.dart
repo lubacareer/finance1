@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -211,4 +212,37 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('integrity failure is visible before saving', (tester) async {
+    final picker = _SavePicker();
+    final diary = _ExportDiary();
+    await mount(tester, diary, picker);
+    final original = File('assets/vba/vbaProject.bin').readAsBytesSync();
+    final changed = Uint8List.fromList(original)..[original.length - 1] ^= 1;
+    tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+      'flutter/assets',
+      (message) async {
+        if (message != null &&
+            utf8.decode(message.buffer.asUint8List()) ==
+                'assets/vba/vbaProject.bin') {
+          return ByteData.sublistView(changed);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+        'flutter/assets',
+        null,
+      ),
+    );
+    await tester.tap(find.text('Export to Excel (unencrypted)'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Workbook macro integrity check failed; export unavailable.'),
+      findsOneWidget,
+    );
+    expect(picker.calls, 0);
+    expect(diary.manifestSaves, 0);
+  });
 }

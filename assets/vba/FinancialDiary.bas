@@ -95,44 +95,46 @@ Public Sub RefreshSummaries()
             For row = 2 To lastRow
                 If IsWorkbookDate(transactions.Cells(row, 3).Value) Then
                     If Format(transactions.Cells(row, 3).Value, "yyyy-mm") = targetMonth Then
-                        sheet.Cells(out, 21).Value = transactions.Cells(row, 3).Value
-                        sheet.Cells(out, 21).NumberFormat = "yyyy-mm-dd"
-                        CopyLiteral sheet.Cells(out, 22), transactions.Cells(row, 24).Value
-                        CopyLiteral sheet.Cells(out, 23), transactions.Cells(row, 4).Value
-                        CopyLiteral sheet.Cells(out, 24), transactions.Cells(row, 5).Value
-                        CopyLiteral sheet.Cells(out, 25), transactions.Cells(row, 26).Value
-                        sheet.Cells(out, 26).Value = transactions.Cells(row, 9).Value
-                        CopyLiteral sheet.Cells(out, 27), transactions.Cells(row, 10).Value
-                        sheet.Cells(out, 28).Value = transactions.Cells(row, 25).Value
-                        sheet.Cells(out, 29).Value = transactions.Cells(row, 23).Value
-                        CopyLiteral sheet.Cells(out, 30), transactions.Cells(row, 6).Value
+                        sheet.Cells(out, 1).Value = transactions.Cells(row, 3).Value
+                        sheet.Cells(out, 1).NumberFormat = "yyyy-mm-dd"
+                        CopyLiteral sheet.Cells(out, 2), transactions.Cells(row, 24).Value
+                        CopyLiteral sheet.Cells(out, 3), transactions.Cells(row, 4).Value
+                        CopyLiteral sheet.Cells(out, 4), transactions.Cells(row, 5).Value
+                        CopyLiteral sheet.Cells(out, 5), transactions.Cells(row, 26).Value
+                        sheet.Cells(out, 6).Value = transactions.Cells(row, 9).Value
+                        CopyLiteral sheet.Cells(out, 7), transactions.Cells(row, 10).Value
+                        sheet.Cells(out, 8).Value = transactions.Cells(row, 25).Value
+                        sheet.Cells(out, 9).Value = transactions.Cells(row, 23).Value
+                        CopyLiteral sheet.Cells(out, 10), transactions.Cells(row, 6).Value
                         out = out + 1
                     End If
                 End If
             Next row
+            If out = 15 Then CopyLiteral sheet.Cells(15, 1), ThisWorkbook.Worksheets("_instructions").Range("A8").Value
             out = 15
             For row = 2 To snapshots.Cells(snapshots.Rows.Count, "A").End(xlUp).Row
                 If IsWorkbookDate(snapshots.Cells(row, 5).Value) Then
                     If Format(snapshots.Cells(row, 5).Value, "yyyy-mm") = targetMonth Then
-                        sheet.Cells(out, 1).Value = snapshots.Cells(row, 5).Value
-                        sheet.Cells(out, 1).NumberFormat = "yyyy-mm-dd"
-                        CopyLiteral sheet.Cells(out, 2), snapshots.Cells(row, 2).Value
-                        CopyLiteral sheet.Cells(out, 3), snapshots.Cells(row, 12).Value
-                        CopyLiteral sheet.Cells(out, 4), snapshots.Cells(row, 4).Value
-                        sheet.Cells(out, 5).Value = snapshots.Cells(row, 6).Value
-                        sheet.Cells(out, 6).Value = snapshots.Cells(row, 7).Value
-                        sheet.Cells(out, 7).Value = snapshots.Cells(row, 8).Value
-                        sheet.Cells(out, 8).Value = snapshots.Cells(row, 9).Value
+                        sheet.Cells(out, 11).Value = snapshots.Cells(row, 5).Value
+                        sheet.Cells(out, 11).NumberFormat = "yyyy-mm-dd"
+                        CopyLiteral sheet.Cells(out, 12), snapshots.Cells(row, 2).Value
+                        CopyLiteral sheet.Cells(out, 13), snapshots.Cells(row, 12).Value
+                        CopyLiteral sheet.Cells(out, 14), snapshots.Cells(row, 4).Value
+                        sheet.Cells(out, 15).Value = snapshots.Cells(row, 6).Value
+                        sheet.Cells(out, 16).Value = snapshots.Cells(row, 7).Value
+                        sheet.Cells(out, 17).Value = snapshots.Cells(row, 8).Value
+                        sheet.Cells(out, 18).Value = snapshots.Cells(row, 9).Value
                         If IsNumeric(snapshots.Cells(row, 10).Value) And Not IsEmpty(snapshots.Cells(row, 10).Value) Then
-                            sheet.Cells(out, 9).Value = snapshots.Cells(row, 10).Value
+                            sheet.Cells(out, 19).Value = snapshots.Cells(row, 10).Value
                         ElseIf IsNumeric(snapshots.Cells(row, 6).Value) And Not IsEmpty(snapshots.Cells(row, 6).Value) And IsNumeric(snapshots.Cells(row, 8).Value) And Not IsEmpty(snapshots.Cells(row, 8).Value) Then
-                            sheet.Cells(out, 9).Value = snapshots.Cells(row, 6).Value - snapshots.Cells(row, 8).Value
+                            sheet.Cells(out, 19).Value = snapshots.Cells(row, 6).Value - snapshots.Cells(row, 8).Value
                         End If
-                        CopyLiteral sheet.Cells(out, 10), snapshots.Cells(row, 11).Value
+                        CopyLiteral sheet.Cells(out, 20), snapshots.Cells(row, 11).Value
                         out = out + 1
                     End If
                 End If
             Next row
+            If out = 15 Then CopyLiteral sheet.Cells(15, 11), ThisWorkbook.Worksheets("_instructions").Range("A9").Value
             out = 15
             For row = 2 To debts.Cells(debts.Rows.Count, "A").End(xlUp).Row
                 If IsWorkbookDate(debts.Cells(row, 6).Value) Then
@@ -143,25 +145,26 @@ Public Sub RefreshSummaries()
                                 paymentTotal = paymentTotal + payments.Cells(payRow, 4).Value
                             End If
                         Next payRow
-                        CopyLiteral sheet.Cells(out, 11), debts.Cells(row, 2).Value
-                        CopyLiteral sheet.Cells(out, 12), debts.Cells(row, 3).Value
-                        sheet.Cells(out, 13).Value = debts.Cells(row, 4).Value
-                        sheet.Cells(out, 14).Value = paymentTotal
+                        CopyLiteral sheet.Cells(out, 21), debts.Cells(row, 2).Value
+                        CopyLiteral sheet.Cells(out, 22), debts.Cells(row, 3).Value
+                        sheet.Cells(out, 23).Value = debts.Cells(row, 4).Value
+                        sheet.Cells(out, 24).Value = paymentTotal
                         If IsNumeric(debts.Cells(row, 5).Value) And Not IsEmpty(debts.Cells(row, 5).Value) Then
-                            sheet.Cells(out, 15).Value = debts.Cells(row, 5).Value
+                            sheet.Cells(out, 25).Value = debts.Cells(row, 5).Value
                         ElseIf IsNumeric(debts.Cells(row, 4).Value) And Not IsEmpty(debts.Cells(row, 4).Value) Then
-                            sheet.Cells(out, 15).Value = debts.Cells(row, 4).Value - paymentTotal
+                            sheet.Cells(out, 25).Value = debts.Cells(row, 4).Value - paymentTotal
                         End If
-                        sheet.Cells(out, 16).Value = debts.Cells(row, 6).Value
-                        sheet.Cells(out, 17).Value = debts.Cells(row, 7).Value
-                        sheet.Cells(out, 16).NumberFormat = "yyyy-mm-dd"
-                        sheet.Cells(out, 17).NumberFormat = "yyyy-mm-dd"
-                        CopyLiteral sheet.Cells(out, 18), debts.Cells(row, 8).Value
-                        CopyLiteral sheet.Cells(out, 19), debts.Cells(row, 10).Value
+                        sheet.Cells(out, 26).Value = debts.Cells(row, 6).Value
+                        sheet.Cells(out, 27).Value = debts.Cells(row, 7).Value
+                        sheet.Cells(out, 26).NumberFormat = "yyyy-mm-dd"
+                        sheet.Cells(out, 27).NumberFormat = "yyyy-mm-dd"
+                        CopyLiteral sheet.Cells(out, 28), debts.Cells(row, 8).Value
+                        CopyLiteral sheet.Cells(out, 29), debts.Cells(row, 10).Value
                         out = out + 1
                     End If
                 End If
             Next row
+            If out = 15 Then CopyLiteral sheet.Cells(15, 21), ThisWorkbook.Worksheets("_instructions").Range("A10").Value
             sheet.Range("B2").Value = 1
             sheet.Range("A3").Value = sheet.Range("A4").Value
         End If

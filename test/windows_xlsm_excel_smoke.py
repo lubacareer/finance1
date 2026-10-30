@@ -4,6 +4,7 @@ Set FINANCE_TEST_XLSM_PATH to a disposable path, run xlsm_export_test.dart,
 then run this script on Windows with pywin32 and desktop Excel installed.
 The workbook is opened without saving, and its macros must be enabled.
 """
+import datetime
 import os
 
 import win32com.client
@@ -13,10 +14,9 @@ path = os.environ['FINANCE_TEST_XLSM_PATH']
 excel = win32com.client.DispatchEx('Excel.Application')
 excel.Visible = False
 excel.DisplayAlerts = False
-excel.AutomationSecurity = 1
 book = None
 try:
-    book = excel.Workbooks.Open(path)
+    book = excel.Workbooks.Open(path, ReadOnly=True)
     sheet = book.Worksheets('2026-01')
     transactions = book.Worksheets('_transactions')
 
@@ -27,6 +27,33 @@ try:
     assert [sheet.Buttons(i).OnAction for i in range(1, 4)] == [
         'RefreshSummaries', 'PreviousMonth', 'NextMonth'
     ]
+    # Initial values are visible before any macro runs.
+    assert sheet.Range('C15').Value == 'Cafe'
+    assert sheet.Range('F15').Value == 30
+    assert sheet.Range('N15').Value == 'Cash'
+    assert sheet.Range('U15').Value == 'Alice'
+    assert sheet.Range('Y15').Value == 6
+    assert sheet.Range('B9').Value == 30
+    empty = book.Worksheets('2026-03')
+    assert empty.Range('A15').Value == 'No transactions'
+    assert empty.Range('K15').Value == 'No balance snapshots'
+    assert empty.Range('U15').Value == 'No debts'
+    # Empty-section labels must be replaced by real dates on a later refresh.
+    transactions.Range('C4').Value = 46082  # 2026-03-01
+    transactions.Range('D4').Value = 'March purchase'
+    transactions.Range('I4').Value = -10
+    transactions.Range('J4').Value = 'ILS'
+    snapshots = book.Worksheets('_snapshots')
+    snapshots.Range('A3').Value = 'new-snapshot'
+    snapshots.Range('D3').Value = 'March cash'
+    snapshots.Range('E3').Value = 46082
+    refresh()
+    assert isinstance(empty.Range('A15').Value, datetime.datetime)
+    assert isinstance(empty.Range('K15').Value, datetime.datetime)
+    assert empty.Range('C15').Value == 'March purchase'
+    assert empty.Range('N15').Value == 'March cash'
+    transactions.Range('A4:AA4').ClearContents()
+    snapshots.Range('A3:L3').ClearContents()
     transactions.Range('C4').Value = 46023  # 2026-01-01
     transactions.Range('D4').Value = 'Synthetic new expense'
     transactions.Range('I4').Value = -5
@@ -35,7 +62,8 @@ try:
     assert sheet.Range('B2').Value == 1
     assert sheet.Range('B9').Value == 30
     assert sheet.Range('C9').Value == 5
-    assert sheet.Range('X15').Value == 'Food'
+    assert sheet.Range('D15').Value == 'Food'
+    assert sheet.Range('C16').Value == 'Synthetic new expense'
     assert transactions.Range('W4').Value is True
     transactions.Range('W4').Value = False
     refresh()

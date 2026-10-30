@@ -4,18 +4,45 @@ Install the pinned development tool with ``python -m pip install oletools==0.60.
 This script only reads files; it never opens a workbook in Excel or runs macros.
 """
 
+import argparse
+import hashlib
+import io
 import pathlib
 import re
 import sys
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SOURCE = ROOT / 'assets' / 'vba' / 'FinancialDiary.bas'
+PIN_SOURCE = ROOT / 'lib' / 'services' / 'vba_integrity.dart'
+
+arguments = argparse.ArgumentParser(description=__doc__)
+arguments.add_argument('project', nargs='?', type=pathlib.Path,
+                       default=ROOT / 'assets' / 'vba' / 'vbaProject.bin')
+project = arguments.parse_args().project
+
 try:
+    import olefile
     from oletools.olevba import VBA_Parser
 except ImportError:
     sys.exit('Install oletools==0.60.2 to verify the VBA project.')
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-SOURCE = ROOT / 'assets' / 'vba' / 'FinancialDiary.bas'
-PROJECT = pathlib.Path(sys.argv[1]) if len(sys.argv) == 2 else ROOT / 'assets' / 'vba' / 'vbaProject.bin'
+pins = re.findall(r"const trustedVbaSha256\s*=\s*'([0-9a-f]{64})'\s*;",
+                  PIN_SOURCE.read_text(encoding='utf-8'))
+if len(pins) != 1:
+    sys.exit('Cannot read the canonical VBA SHA-256 pin.')
+try:
+    content = project.read_bytes()
+except OSError as error:
+    sys.exit(f'Cannot read VBA project: {error}')
+if not olefile.isOleFile(data=content):
+    sys.exit('VBA project must be an OLE compound file.')
+if hashlib.sha256(content).hexdigest() != pins[0]:
+    sys.exit('VBA project SHA-256 does not match the reviewed pin.')
+try:
+    with olefile.OleFileIO(io.BytesIO(content), raise_defects=olefile.DEFECT_INCORRECT):
+        pass
+except (OSError, ValueError) as error:
+    sys.exit(f'Invalid OLE compound file: {error}')
 
 # VBA is case-insensitive, but quoted text and comments are not normalized.
 # Compare each nonempty line separately so a lost line boundary cannot pass.
@@ -33,7 +60,7 @@ def normalized(source):
     return lines
 
 
-parser = VBA_Parser(str(PROJECT))
+parser = VBA_Parser(str(project), data=content)
 try:
     modules = list(parser.extract_macros())
 finally:

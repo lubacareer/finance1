@@ -264,6 +264,81 @@ void main() {
   });
 
   testWidgets(
+    'changing a reviewed account snapshot to cash clears its account',
+    (tester) async {
+      final original = <String, dynamic>{
+        'id': 's1',
+        'kind': 'account',
+        'accountId': 'a',
+        'name': 'Balance',
+        'date': '2026-01-02',
+        'remainingBalance': 100.0,
+        'currency': 'ILS',
+      };
+      await tester.runAsync(() async {
+        await diary.putAccount({'id': 'a', 'name': 'Bank', 'type': 'bank'});
+        await diary.putBalanceSnapshot(original);
+        await diary.saveWorkbookExportManifest(
+          'export-1',
+          expectedGeneration:
+              diary.workbookReviewSnapshot()['generation'] as int,
+          entries: [],
+          snapshots: diary.balanceSnapshots,
+          debts: [],
+        );
+      });
+      final workbook = fixture.fixture();
+      fixture.append(workbook, '_manifest', {
+        'version': 1,
+        'exportId': 'export-1',
+        'kind': 'meta',
+      });
+      fixture.append(workbook, '_manifest', {
+        'version': 1,
+        'exportId': 'export-1',
+        'kind': 'snapshot',
+        'id': 's1',
+      });
+      fixture.append(workbook, '_snapshots', {
+        ...original,
+        'remainingBalance': 110.0,
+      });
+      await mount(tester, fixture.encode(workbook));
+      await tester.tap(find.text('Prepare workbook review'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Balance snapshot').last);
+      await tester.pumpAndSettle();
+      final kind = find.widgetWithText(
+        DropdownButtonFormField<String>,
+        'Balance type',
+      );
+      await tester.ensureVisible(kind);
+      await tester.tap(kind);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cash').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Account (optional)'), findsNothing);
+      expect(diary.balanceSnapshots.single['accountId'], 'a');
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.ensureVisible(find.text('Save reviewed changes'));
+      await tester.tap(find.text('Save reviewed changes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save').last);
+      await tester.runAsync(() async {
+        for (
+          var i = 0;
+          i < 100 && diary.balanceSnapshots.single['kind'] != 'cash';
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      });
+      await tester.pumpAndSettle();
+      expect(diary.balanceSnapshots.single['kind'], 'cash');
+      expect(diary.balanceSnapshots.single['accountId'], isNull);
+    },
+  );
+  testWidgets(
     'reimport deletion requires separate confirmation and stays scoped',
     (tester) async {
       await tester.runAsync(() async {

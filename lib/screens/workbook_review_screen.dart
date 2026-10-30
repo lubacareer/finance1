@@ -332,6 +332,7 @@ class _WorkbookReviewScreenState extends State<WorkbookReviewScreen> {
       row['linkedIds'] ??= <String>[];
     } else if (item.kind == 'snapshot') {
       row['name'] = text('name');
+      if (row['kind'] == 'cash') row['accountId'] = null;
       for (final key in [
         'remainingBalance',
         'fromBank',
@@ -862,6 +863,7 @@ class _WorkbookReviewScreenState extends State<WorkbookReviewScreen> {
                 ],
                 onChanged: (value) => setState(() {
                   item.fields['kind'] = value;
+                  if (value == 'cash') item.fields['accountId'] = null;
                   item.confirmedDuplicate = false;
                   item.confirmedConflict = false;
                 }),
@@ -921,31 +923,32 @@ class _WorkbookReviewScreenState extends State<WorkbookReviewScreen> {
               ),
             ],
             field(item, 'currency', 'Currency'),
-            DropdownButtonFormField<String>(
-              initialValue:
-                  accounts.any((a) => a['id'] == item.fields['accountId'])
-                  ? item.fields['accountId'] as String
-                  : null,
-              decoration: InputDecoration(
-                labelText: t(
-                  item.kind == 'entry'
-                      ? 'Account (required)'
-                      : 'Account (optional)',
-                ),
-              ),
-              items: [
-                for (final a in accounts)
-                  DropdownMenuItem(
-                    value: '${a['id']}',
-                    child: Text('${a['name']}'),
+            if (item.kind != 'snapshot' || item.fields['kind'] != 'cash')
+              DropdownButtonFormField<String>(
+                initialValue:
+                    accounts.any((a) => a['id'] == item.fields['accountId'])
+                    ? item.fields['accountId'] as String
+                    : null,
+                decoration: InputDecoration(
+                  labelText: t(
+                    item.kind == 'entry'
+                        ? 'Account (required)'
+                        : 'Account (optional)',
                   ),
-              ],
-              onChanged: (value) => setState(() {
-                item.fields['accountId'] = value;
-                item.confirmedDuplicate = false;
-                item.confirmedConflict = false;
-              }),
-            ),
+                ),
+                items: [
+                  for (final a in accounts)
+                    DropdownMenuItem(
+                      value: '${a['id']}',
+                      child: Text('${a['name']}'),
+                    ),
+                ],
+                onChanged: (value) => setState(() {
+                  item.fields['accountId'] = value;
+                  item.confirmedDuplicate = false;
+                  item.confirmedConflict = false;
+                }),
+              ),
           ],
           if (duplicate)
             CheckboxListTile(

@@ -267,6 +267,15 @@ const Map<String, Map<String, String>> translations = {
     'Export to Excel (unencrypted)': 'ייצוא ל-Excel (לא מוצפן)',
     'Excel file saved.': 'קובץ Excel נשמר.',
     'Could not save the Excel file.': 'לא ניתן לשמור את קובץ ה-Excel.',
+    'Workbook macro integrity check failed; export unavailable.':
+        'בדיקת התקינות של מאקרו חוברת העבודה נכשלה; הייצוא אינו זמין.',
+    'After editing, refresh. For changes to linked transactions, reimport and reconcile in the app, then export again.':
+        'לאחר עריכה יש לרענן. אם השתנו תנועות מקושרות, יש לייבא מחדש ולבדוק את הקישור באפליקציה, ואז לייצא שוב.',
+    'Values at export; refresh after editing data.':
+        'הערכים נכונים למועד הייצוא; יש לרענן לאחר עריכת הנתונים.',
+    'No transactions': 'אין תנועות',
+    'No balance snapshots': 'אין תמונות מצב של יתרות',
+    'No debts': 'אין חובות',
     'Transactions': 'תנועות',
     'Monthly summary': 'סיכום חודשי',
     'ILS amount': 'סכום בשקלים',
@@ -844,6 +853,15 @@ const Map<String, Map<String, String>> translations = {
     'Export to Excel (unencrypted)': 'Экспорт в Excel (без шифрования)',
     'Excel file saved.': 'Файл Excel сохранён.',
     'Could not save the Excel file.': 'Не удалось сохранить файл Excel.',
+    'Workbook macro integrity check failed; export unavailable.':
+        'Проверка целостности макроса не пройдена; экспорт недоступен.',
+    'After editing, refresh. For changes to linked transactions, reimport and reconcile in the app, then export again.':
+        'После изменений обновите данные. При изменении связанных операций импортируйте их повторно и проверьте связи в приложении, затем выполните экспорт снова.',
+    'Values at export; refresh after editing data.':
+        'Значения на момент экспорта; обновите после изменения данных.',
+    'No transactions': 'Нет операций',
+    'No balance snapshots': 'Нет снимков остатков',
+    'No debts': 'Нет долгов',
     'Transactions': 'Операции',
     'Monthly summary': 'Сводка по месяцам',
     'ILS amount': 'Сумма в шекелях',

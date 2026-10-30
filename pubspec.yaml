@@ -80,7 +80,7 @@ flutter:
     - assets/tessdata/
     # Compiled in desktop Excel from assets/vba/FinancialDiary.bas. Verify source
     # with tool/verify_vba_source.py as described in assets/vba/README.md.
-    # SHA-256: 0833b8825cce6ce249253816b56e7a348315d3e9f0b2b2e7f1fafd498e185aaa
+    # SHA-256: 2b888864730b6f116c1c79c1feb1068725dbc77f2030f8d5b8a022215ab29bf3
     - assets/vba/vbaProject.bin
 
   # To add assets to your application, add an assets section, like this:
