@@ -108,7 +108,7 @@ class _WorkbookReviewScreenState extends State<WorkbookReviewScreen> {
       } else {
         final file = await FilePicker.pickFile(
           type: FileType.custom,
-          allowedExtensions: ['xlsm'],
+          allowedExtensions: ['xlsx', 'xlsm'],
         );
         if (!mounted) return;
         if (file != null) {

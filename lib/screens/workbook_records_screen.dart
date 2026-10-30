@@ -13,23 +13,11 @@ class WorkbookRecordsScreen extends StatelessWidget {
   final DiaryController controller;
   final String Function(String) tr;
 
-  num? snapshotDebt(Map<String, dynamic> row) {
-    if (row['debt'] is num) return row['debt'] as num;
-    if (row['remainingBalance'] is num && row['payments'] is num) {
-      return (row['remainingBalance'] as num) - (row['payments'] as num);
-    }
-    return null;
-  }
+  num? snapshotDebt(Map<String, dynamic> row) =>
+      DiaryController.snapshotDebt(row);
 
-  num? debtRemaining(Map<String, dynamic> row) {
-    if (row['remainingBalance'] is num) return row['remainingBalance'] as num;
-    if (row['originalAmount'] is! num) return null;
-    return (row['originalAmount'] as num) -
-        ((row['payments'] as List?) ?? []).whereType<Map>().fold<num>(
-          0,
-          (sum, payment) => sum + ((payment['amount'] as num?) ?? 0),
-        );
-  }
+  num? debtRemaining(Map<String, dynamic> row) =>
+      DiaryController.debtRemaining(row);
 
   Future<void> _edit(
     BuildContext context,

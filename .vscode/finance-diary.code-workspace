@@ -1,0 +1,19 @@
+{
+  "folders": [
+    { "path": ".." }
+  ],
+  "settings": {
+    "java.import.exclusions": [
+      "**/node_modules/**",
+      "**/.metadata/**",
+      "**/archetype-resources/**",
+      "**/META-INF/maven/**",
+      "**/vendor/flutter_tesseract_ocr",
+      "**/vendor/flutter_tesseract_ocr/**"
+    ],
+    "java.server.launchMode": "Standard",
+    "java.import.gradle.enabled": true,
+    "gradle.allowParallelRun": false,
+    "gradle.nestedProjects": ["android"]
+  }
+}

@@ -141,7 +141,8 @@ List<Map<String, dynamic>> _readSheet(Excel workbook, String name) {
       .map((cell) => '${_value(cell?.value) ?? ''}'.trim())
       .toList();
   final required = _columns[name]!;
-  if (header.toSet().length != header.length ||
+  final namedHeaders = header.where((name) => name.isNotEmpty).toList();
+  if (namedHeaders.toSet().length != namedHeaders.length ||
       required.any((field) => !header.contains(field))) {
     throw FormatException('Invalid workbook columns: $name');
   }

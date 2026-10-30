@@ -29,6 +29,8 @@ Public Sub RefreshSummaries()
     Dim targetMonth As String, paymentTotal As Double, clearLast As Long
     Dim warningMessage As String, source As Variant, dateColumn As Long, endRow As Long, links As String
     Dim lastColumn As Long, found As Range
+    Dim previousScreenUpdating As Boolean
+    previousScreenUpdating = Application.ScreenUpdating
     On Error GoTo Failed
     Set transactions = ThisWorkbook.Worksheets("_transactions")
     Set snapshots = ThisWorkbook.Worksheets("_snapshots")
@@ -165,23 +167,43 @@ Public Sub RefreshSummaries()
         End If
     Next sheet
     Application.CalculateFull
-    Application.ScreenUpdating = True
+    Application.ScreenUpdating = previousScreenUpdating
     Exit Sub
 ReviewNeeded:
     For Each sheet In ThisWorkbook.Worksheets
         If sheet.Name Like "####-##" Then sheet.Range("A3").Value = warningMessage
     Next sheet
-    Application.ScreenUpdating = True
+    Application.ScreenUpdating = previousScreenUpdating
     Exit Sub
 Failed:
+    HandleRefreshFailure previousScreenUpdating
+End Sub
+
+' A separate procedure has its own error handler. Once RefreshSummaries enters
+' its handler, another error in that same procedure cannot be handled there.
+Private Sub HandleRefreshFailure(ByVal previousScreenUpdating As Boolean)
+    Dim sheet As Worksheet, failureMessage As String, failureValue As Variant
+    failureMessage = "Refresh failed; check workbook data."
+    ' The instructions and monthly sheets are editable, so cleanup itself must
+    ' remain best-effort even if a sheet is missing, invalid, or protected.
+    On Error Resume Next
+    Err.Clear
+    failureValue = ThisWorkbook.Worksheets("_instructions").Range("A4").Value
+    If Err.Number = 0 Then
+        If Not IsError(failureValue) And Not IsEmpty(failureValue) Then
+            If Len(Trim$(CStr(failureValue))) > 0 Then failureMessage = CStr(failureValue)
+        End If
+    End If
+    Err.Clear
     For Each sheet In ThisWorkbook.Worksheets
         If sheet.Name Like "####-##" Then
             sheet.Range("B2").Value = 0
-            sheet.Range("A3").Value = ThisWorkbook.Worksheets("_instructions").Range("A4").Value
+            sheet.Range("A3").Value = failureMessage
         End If
     Next sheet
-    Application.ScreenUpdating = True
-    MsgBox ThisWorkbook.Worksheets("_instructions").Range("A4").Value, vbExclamation
+    Application.ScreenUpdating = previousScreenUpdating
+    On Error GoTo 0
+    MsgBox failureMessage, vbExclamation
 End Sub
 
 Public Sub NextMonth()

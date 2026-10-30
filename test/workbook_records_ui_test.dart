@@ -47,6 +47,55 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  test('record calculations share controller validation and overrides', () {
+    final screen = WorkbookRecordsScreen(controller: diary, tr: (s) => s);
+    expect(screen.snapshotDebt({'remainingBalance': 100, 'payments': 25}), 75);
+    expect(screen.snapshotDebt({'debt': 12, 'remainingBalance': 100}), 12);
+    expect(
+      screen.snapshotDebt({'remainingBalance': double.infinity, 'payments': 1}),
+      isNull,
+    );
+    expect(screen.snapshotDebt({'remainingBalance': 10}), isNull);
+    expect(
+      screen.debtRemaining({
+        'originalAmount': 100,
+        'payments': [
+          {'amount': 120},
+        ],
+      }),
+      -20,
+    );
+    expect(
+      screen.debtRemaining({'remainingBalance': 7, 'payments': 'invalid'}),
+      7,
+    );
+    expect(
+      screen.debtRemaining({
+        'originalAmount': 100,
+        'payments': [
+          {'amount': 'invalid'},
+        ],
+      }),
+      isNull,
+    );
+    expect(
+      screen.debtRemaining({
+        'originalAmount': 100,
+        'payments': [null],
+      }),
+      isNull,
+    );
+    expect(
+      screen.debtRemaining({
+        'originalAmount': 100,
+        'payments': [
+          {'amount': double.nan},
+        ],
+      }),
+      isNull,
+    );
+  });
+
   testWidgets('snapshot titles use nonblank names and appropriate fallbacks', (
     tester,
   ) async {

@@ -157,6 +157,38 @@ void main() {
     expect(reviewWorkbookReimport(bytes, snapshot: diary()).changes, isEmpty);
   });
 
+  test(
+    'blank and whitespace-only extra headers do not invalidate reimport',
+    () {
+      final book = exported();
+      // The later named column makes the empty columns part of the header row.
+      book['_transactions'].cell(CellIndex.indexByString('Y1')).value =
+          TextCellValue('  ');
+      book['_transactions'].cell(CellIndex.indexByString('AB1')).value =
+          TextCellValue('Extra');
+      final result = reviewWorkbookReimport(encode(book), snapshot: diary());
+      expect(result.changes, isEmpty);
+    },
+  );
+
+  test('duplicate named or missing required headers remain invalid', () {
+    final duplicate = exported();
+    duplicate['_transactions'].cell(CellIndex.indexByString('Y1')).value =
+        TextCellValue('date');
+    expect(
+      () => reviewWorkbookReimport(encode(duplicate), snapshot: diary()),
+      throwsFormatException,
+    );
+
+    final missing = exported();
+    missing['_transactions'].cell(CellIndex.indexByString('A1')).value =
+        TextCellValue(' ');
+    expect(
+      () => reviewWorkbookReimport(encode(missing), snapshot: diary()),
+      throwsFormatException,
+    );
+  });
+
   test('only exported missing rows become deletion suggestions', () {
     final review = reviewWorkbookReimport(
       encode(exported(includeRow: false)),

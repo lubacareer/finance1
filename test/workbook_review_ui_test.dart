@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:excel_plus/excel_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:finance_diary/screens/workbook_review_screen.dart';
 import 'package:finance_diary/services/diary_controller.dart';
 import 'package:finance_diary/services/vault.dart';
@@ -9,6 +10,53 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'workbook_reimport_test.dart' as fixture;
+
+final class _WorkbookFile extends PlatformFile {
+  _WorkbookFile(this.contents, this.filename);
+  final Uint8List contents;
+  final String filename;
+  @override
+  String get name => filename;
+  @override
+  Uri get uri => Uri.parse('memory://$filename');
+  @override
+  Never get xFile => throw UnimplementedError();
+  @override
+  int? lengthSync() => contents.length;
+  @override
+  Future<int?> length() async => contents.length;
+  @override
+  Future<Uint8List> readAsBytes() async => contents;
+  @override
+  Stream<Uint8List> readAsByteStream() => Stream.value(contents);
+}
+
+class _WorkbookPicker extends FilePickerPlatform {
+  _WorkbookFile? next;
+  List<String>? extensions;
+  FileType? type;
+  @override
+  Future<PlatformFile?> pickFile({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    DarwinOptions darwinOptions = const DarwinOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async {
+    this.type = type;
+    extensions = allowedExtensions;
+    return next;
+  }
+
+  @override
+  Future<void> clearTemporaryFiles() async {}
+}
 
 Uint8List sourceWorkbook() {
   final book = Excel.createExcel();
@@ -66,6 +114,59 @@ void main() {
     await tester.tap(find.text('Choose workbook'));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('platform picker accepts XLSX source and XLSM reimport', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await diary.putAccount({'id': 'a', 'name': 'Bank', 'type': 'bank'});
+      await diary.putEntry(fixture.entry);
+      await diary.saveWorkbookExportManifest(
+        'export-1',
+        expectedGeneration: diary.workbookReviewSnapshot()['generation'] as int,
+        entries: diary.entries,
+        snapshots: [],
+        debts: [],
+      );
+    });
+    final oldPicker = FilePickerPlatform.instance;
+    final picker = _WorkbookPicker()
+      ..next = _WorkbookFile(sourceWorkbook(), 'source.xlsx');
+    FilePickerPlatform.instance = picker;
+    addTearDown(() => FilePickerPlatform.instance = oldPicker);
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WorkbookReviewScreen(controller: diary, tr: (s) => s),
+      ),
+    );
+
+    await tester.tap(find.text('Choose workbook'));
+    await tester.pumpAndSettle();
+    expect(picker.type, FileType.custom);
+    expect(picker.extensions, containsAll(['xlsx', 'xlsm']));
+    await tester.enterText(find.byType(TextField).first, '2026');
+    await tester.tap(find.text('Prepare workbook review'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Add • Transaction • Salary'), findsOneWidget);
+
+    picker.next = _WorkbookFile(
+      fixture.encode(fixture.exported(includeRow: false)),
+      'export.xlsm',
+    );
+    await tester.ensureVisible(find.text('Choose workbook'));
+    await tester.tap(find.text('Choose workbook'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prepare workbook review'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Delete • Transaction • Coffee'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('undated item and newly created cash account require review', (
     tester,
