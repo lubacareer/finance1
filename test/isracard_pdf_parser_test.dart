@@ -126,6 +126,97 @@ void main() {
     expect(result.rows.single['cardSuffix'], isNull);
     expect(result.incompletePages, {1});
   });
+
+  test('reconciles OCR and digital card candidates conservatively', () {
+    BankPdfPage page(List<String> candidates, {bool ocr = false}) {
+      final p = IsracardSyntheticPage();
+      if (candidates.isNotEmpty) {
+        isracardCardHeader(p, suffix: candidates.first);
+        if (candidates.length > 1) p.word(candidates[1], 240, 810);
+      }
+      isracardDomesticHeader(p, y: 760);
+      isracardPurchase(p, y: 710);
+      isracardBilling(p, y: 690);
+      return p.build(ocr: ocr);
+    }
+
+    final cases = <(List<String>, List<String>, String?)>[
+      (['1111', '2222'], ['1111'], null),
+      (['1111'], ['1111', '2222'], null),
+      (['1111', '2222'], ['1111', '2222'], null),
+      (['1111'], ['2222'], null),
+      (['2222'], ['1111'], null),
+      (['1111'], ['1111'], '1111'),
+      (<String>[], ['1111'], '1111'),
+      (['1111'], <String>[], '1111'),
+      (<String>[], <String>[], null),
+    ];
+    for (final (digitalCards, ocrCards, expected) in cases) {
+      final result = parseIsracardDocument(
+        [page(ocrCards, ocr: true)],
+        headerPages: [page(digitalCards)],
+      )!;
+      expect(result.rows, hasLength(1), reason: '$digitalCards / $ocrCards');
+      expect(
+        result.rows.single['cardSuffix'],
+        expected,
+        reason: '$digitalCards / $ocrCards',
+      );
+      expect(result.cardSuffixes, expected == null ? isEmpty : {expected});
+      expect(result.incompletePages.contains(1), expected == null);
+    }
+
+    final scanned = parseIsracardDocument([
+      page(['1111'], ocr: true),
+    ])!;
+    expect(scanned.rows.single['cardSuffix'], '1111');
+    final ambiguousScan = parseIsracardDocument([
+      page(['1111', '2222'], ocr: true),
+    ])!;
+    expect(ambiguousScan.rows.single['cardSuffix'], isNull);
+    expect(ambiguousScan.incompletePages, contains(1));
+  });
+
+  test('flags an ambiguous heading even if a page has no purchase rows', () {
+    final page = IsracardSyntheticPage();
+    isracardCardHeader(page);
+    page.word('2222', 240, 810);
+    isracardDomesticHeader(page, y: 760);
+    final result = parseIsracardDocument([page.build()])!;
+    expect(result.rows, isEmpty);
+    expect(result.cardSuffixes, isEmpty);
+    expect(result.incompletePages, contains(1));
+  });
+
+  test('ambiguous digital continuation cannot backfill prior billing date', () {
+    final first = IsracardSyntheticPage();
+    isracardCardHeader(first);
+    isracardDomesticHeader(first, y: 760);
+    isracardPurchase(first, y: 710);
+
+    BankPdfPage continuation({required bool ambiguous, bool ocr = false}) {
+      final page = IsracardSyntheticPage();
+      isracardCardHeader(page);
+      if (ambiguous) page.word('2222', 240, 810);
+      isracardDomesticHeader(page, y: 760);
+      page.word('המשך', 350, 760);
+      page.word('קודם', 390, 760);
+      isracardBilling(page, y: 730);
+      isracardPurchase(page, y: 710, date: '02/10/26');
+      isracardBilling(page, y: 690);
+      return page.build(ocr: ocr);
+    }
+
+    final firstPage = first.build();
+    final result = parseIsracardDocument(
+      [firstPage, continuation(ambiguous: false, ocr: true)],
+      headerPages: [firstPage, continuation(ambiguous: true)],
+    )!;
+    expect(result.rows, hasLength(2));
+    expect(result.rows.first['billingDate'], isNull);
+    expect(result.rows.last['cardSuffix'], isNull);
+    expect(result.incompletePages, containsAll([1, 2]));
+  });
   test('marks signs for review and rejects clipped numeric fragments', () {
     final p = IsracardSyntheticPage();
     isracardCardHeader(p);

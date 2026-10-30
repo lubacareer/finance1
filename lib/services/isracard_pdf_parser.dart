@@ -143,7 +143,7 @@ List<_Section> _sections(BankPdfPage p) {
 
 /// Require an explicit, geometrically adjacent heading; no page inherits a
 /// suffix simply because it followed a known card.
-String? _cardOnPage(BankPdfPage page) {
+Set<String> _cardCandidatesOnPage(BankPdfPage page) {
   final labels = _labels(page, 'ספרות');
   final cards = _labels(page, 'כרטיס');
   final numbers = _find(page, RegExp(r'(?<!\d)\d{4}(?!\d)'));
@@ -158,7 +158,7 @@ String? _cardOnPage(BankPdfPage page) {
       }
     }
   }
-  return candidates.length == 1 ? candidates.single : null;
+  return candidates;
 }
 
 /// Returns one complete monetary value in a bounded column on a row.
@@ -249,8 +249,21 @@ IsracardPdfResult? parseIsracardDocument(
       incomplete.add(index + 1);
       continue;
     }
-    final suffix =
-        _cardOnPage(p) ?? (digital != p ? _cardOnPage(digital) : null);
+    final pageCandidates = _cardCandidatesOnPage(p);
+    final digitalCandidates = identical(digital, p)
+        ? pageCandidates
+        : _cardCandidatesOnPage(digital);
+    final candidates = {...pageCandidates, ...digitalCandidates};
+    // A single OCR candidate must never override an ambiguous or conflicting
+    // selectable-text heading (or vice versa).
+    final ambiguous =
+        pageCandidates.length > 1 ||
+        digitalCandidates.length > 1 ||
+        candidates.length > 1;
+    final suffix = !ambiguous && candidates.length == 1
+        ? candidates.single
+        : null;
+    if (ambiguous) incomplete.add(index + 1);
     if (suffix != null) cards.add(suffix);
     final dates = _find(p, _datePattern);
     for (var s = 0; s < sections.length; s++) {
